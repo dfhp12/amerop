@@ -145,7 +145,8 @@ const tglCol=Object.keys(rows[0]||{}).find(c=>c.includes('Tanggal Pengajuan'))||
 const makCol=Object.keys(rows[0]||{}).find(c=>c.includes('MAK')||c.includes('Akun'))||(type==='jaldis'?kodeCol:'');
 const spbyCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NO')&&c.toUpperCase().includes('SPBY'))||'';
 const akrualCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('STATUS AKRUAL'))||'';
-const penggantianCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('PENGGANTIAN')||c.toUpperCase().includes('TRANSFER'))||'';
+const penggantianCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('PENERIMA'))||Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NAMA')&&c.toUpperCase().includes('TRANSFER'))||'';
+const nmoCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NILAI MODEL'))||'';
 const unitCol=type==='jaldis'?Object.keys(rows[0]||{}).find(c=>c.includes('Unit'))||'':'';
 
 rows.forEach(row=>{
@@ -178,7 +179,7 @@ results.push({
 src:type==='jaldis'?'PJ_Jaldis':'PJ_Kegiatan',
 unit,dt:String(row[tglCol]||'').trim(),
 desc,amt,kode_raw:krRaw,out,sub,komp,akun,
-ak:akrual,spby,penggantian,sd:spbyDone,dup:false,op:false
+ak:akrual,spby,penggantian,nmo:parseAmt(row[nmoCol]),sd:spbyDone,dup:false,op:false
 });
 });
 return results;
@@ -208,7 +209,11 @@ let forecasts=[];
 async function loadFc(){
 if(!SCRIPT_URL){forecasts=JSON.parse(localStorage.getItem('amerop_fc_v8')||'[]');loadStatus.fc='local';return}
 try{const r=await fetch(SCRIPT_URL);const j=await r.json();
-if(j.success&&j.data){forecasts=j.data.map(row=>({id:row.id,dir:row.dir,kegiatan:row.kegiatan,status:row.status,maks:JSON.parse(row.maks_json||'[]'),total:parseFloat(row.total)||0,waktu:row.waktu||''}));loadStatus.fc='live'}
+if(j.success&&j.data){const all=j.data.map(row=>({id:row.id,dir:row.dir,kegiatan:row.kegiatan,status:row.status,maks:JSON.parse(row.maks_json||'[]'),total:parseFloat(row.total)||0,waktu:row.waktu||''}));
+// Extract settings entry
+const se=all.find(f=>f.dir==='__settings__'||f.status==='settings');
+if(se){_settingsFcId=se.id;try{const sd=JSON.parse(se.kegiatan||'{}');if(sd.fa_asof){faAsOf=sd.fa_asof;localStorage.setItem('amerop_fa_asof',faAsOf)}if(sd.rpd&&sd.rpd.length===4){rpdSettings={pct:sd.rpd};localStorage.setItem('amerop_rpd',JSON.stringify(rpdSettings))}}catch(ex){}}
+forecasts=all.filter(f=>f.dir!=='__settings__'&&f.status!=='settings');loadStatus.fc='live'}
 else throw new Error(j.error||'err')}catch(e){forecasts=JSON.parse(localStorage.getItem('amerop_fc_v8')||'[]');loadStatus.fc='error: '+e.message}}
 
 async function saveFc(action,data){
@@ -307,20 +312,30 @@ function twEndMs(tw){const y=new Date().getFullYear();return new Date(y,tw*3,0).
 const TW_LABELS=['TW I','TW II','TW III','TW IV'];
 
 // RPD helpers
-function saveRpd(){localStorage.setItem('amerop_rpd',JSON.stringify(rpdSettings))}
+function saveRpd(){localStorage.setItem('amerop_rpd',JSON.stringify(rpdSettings));saveSettings();}
+async function saveSettings(){
+const sd=JSON.stringify({fa_asof:faAsOf,rpd:rpdSettings.pct});
+if(_settingsFcId){
+await saveFc('update',{id:_settingsFcId,dir:'__settings__',maks:[],kegiatan:sd,status:'settings',total:0,waktu:''});
+}else{
+// create and capture id
+if(!SCRIPT_URL){return;}
+try{const r=await fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'create',dir:'__settings__',kegiatan:sd,status:'settings',maks_json:'[]',total:0,waktu:''})});
+const j=await r.json();if(j.success&&j.id){_settingsFcId=j.id;}}catch(e){console.warn('saveSettings error',e);}
+}}
 function rpdTarget(dk,tw){return dP(dk)*(rpdSettings.pct[tw]/100)}
 function rpdTargetTotal(tw){return DK.filter(d=>d!=='Direktif').reduce((s,dk)=>s+rpdTarget(dk,tw),0)}
 
 // Forecast waktu helpers
 function fcWaktuTw(fc){
-if(!fc.waktu)return null;
-const s=fc.waktu;
-// format options: "MM/YYYY", "W1/MM/YYYY", "DD/MM/YYYY"
-const parts=s.split('/');
-if(parts.length===2){const m=parseInt(parts[0]);return m<=3?1:m<=6?2:m<=9?3:4}
-if(parts.length===3){
-if(parts[0].startsWith('W')){const m=parseInt(parts[1]);return m<=3?1:m<=6?2:m<=9?3:4}
-const m=parseInt(parts[1]);return m<=3?1:m<=6?2:m<=9?3:4}
+if(!fc.waktu||!fc.waktu.trim())return null;
+const s=fc.waktu.trim();
+// DD/MM/YYYY
+if(s.match(/^\d{2}\/\d{2}\/\d{4}$/)){const m=parseInt(s.split('/')[1]);return m<=3?1:m<=6?2:m<=9?3:4}
+// W{week}/{MM}/{YYYY}
+if(s.startsWith('W')){const p=s.slice(1).split('/');const m=parseInt(p[1]||'1');return m<=3?1:m<=6?2:m<=9?3:4}
+// MM/YYYY
+if(s.match(/^\d{1,2}\/\d{4}$/)){const m=parseInt(s.split('/')[0]);return m<=3?1:m<=6?2:m<=9?3:4}
 return null}
 
 // ========== STATE ==========
@@ -332,6 +347,8 @@ let fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',status:'forecast',waktu:''}
 let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[15,50,70,100]};
 let rpdInputMode='pct';
 let faAsOf=localStorage.getItem('amerop_fa_asof')||'';
+let _settingsFcId=null;
+let _fcCollapse={proj:false,rpd:false};
 let B=B_EMBED.slice(),PJ=PJ_EMBED.slice();
 let loadStatus={fa:'memuat',pj:'memuat',fc:'memuat'};
 
@@ -341,7 +358,7 @@ function statusDot(s){return s.includes('live')||s.includes('7/7')?'on':s.includ
 // ========== RENDER ==========
 function render(){
 const app=document.getElementById('app');
-const asofDisp=faAsOf?`<span style="color:var(--teal);font-weight:600">Akrual as of ${faAsOf}</span>`:'<span style="color:var(--tx3);font-style:italic">Akrual as of — <button class="btn btn-sm" style="padding:1px 6px;font-size:10px" onclick="setAsOf()">Set tanggal</button></span>';
+const asofDisp=`<span style="color:var(--teal);font-weight:600">${faAsOf?'Akrual as of '+faAsOf:'Akrual as of —'}</span> <button class="btn btn-sm" style="padding:1px 6px;font-size:10px" onclick="setAsOf()">${faAsOf?'&#9998; Edit':'Set tanggal'}</button>`;
 app.innerHTML=`<div class="header"><div>
 <h1>Forecast Amerop</h1>
 <div class="sub">Periode Maret 2026 | Satker 637372</div>
@@ -363,7 +380,7 @@ if(r){app.innerHTML+=`<div class="modal-overlay" onclick="pjModalIdx=null;render
 
 window.setAsOf=function(){
 const v=prompt('Masukkan tanggal Akrual (contoh: 28 Maret 2026):',faAsOf);
-if(v!==null){faAsOf=v.trim();localStorage.setItem('amerop_fa_asof',faAsOf);render();}
+if(v!==null){faAsOf=v.trim();localStorage.setItem('amerop_fa_asof',faAsOf);saveSettings();render();}
 }
 
 // ========== TAB: RINGKASAN ==========
@@ -371,7 +388,7 @@ function rOv(c){
 const outs=gO();const tP=outs.reduce((s,o)=>s+o.p,0);const tR=outs.reduce((s,o)=>s+o.r,0);const tPJ=pAll();const tFc=forecasts.filter(fc=>fc.status==='forecast').reduce((s,fc)=>s+fc.total,0);
 c.innerHTML+=`<div class="metrics"><div class="mc"><div class="ml">Total pagu</div><div class="mv">${fmt(tP)}</div></div><div class="mc"><div class="ml">Realisasi SAKTI</div><div class="mv">${fmt(tR)}</div><div class="ms">${pc(tR/tP)}</div></div><div class="mc"><div class="ml">PJ Submitted</div><div class="mv">${fmt(tPJ)}</div><div class="ms">${pc(tPJ/tP)}</div></div><div class="mc"><div class="ml">Forecast</div><div class="mv">${fmt(tFc)}</div><div class="ms">${forecasts.filter(f=>f.status==='forecast').length} kegiatan</div></div><div class="mc"><div class="ml">Sisa</div><div class="mv">${fmt(tP-tPJ-tFc)}</div><div class="ms">${pc((tP-tPJ-tFc)/tP)}</div></div></div>`;
 const g=document.createElement('div');g.className='g2';
-let ch=`<div class="card"><div class="ch"><h2>Belanja bulanan (PJ)</h2></div><div class="ca" id="mC"></div></div>`;
+let ch=`<div class="card"><div class="ch"><h2>PJ Bulanan</h2></div><div class="ca" id="mC"></div></div>`;
 // Per direktorat — Serapan now uses SAKTI/Pagu
 let rows='';for(const[dk,dv] of Object.entries(DIR)){const dp=dP(dk),dr=dR(dk),dpj=dPJ(dk),dfc=dFc(dk);const pv=dp>0?dr/dp:0;const isD=dk==='Direktif';
 rows+=`<tr${isD?' style="color:var(--tx3);font-style:italic"':''}><td><strong>${dv.label}</strong><br><span style="font-size:11px;color:var(--tx3)">${dv.outputs.join(', ')}</span></td><td class="n">${fmt(dp)}</td><td class="n">${fmt(dr)}</td><td class="n">${fmt(dpj)}</td><td class="n">${fmt(dfc)}</td><td class="n">${isD?'<span class="b ba">Menunggu</span>':bar(pv)}</td></tr>`;}
@@ -400,9 +417,13 @@ UNITS.forEach(u=>{
 const a=jAgg(u);const sk=jSaktiByUnit(u);const pg=jPaguByUnit(u);
 const sisaJ=pg.j-sk.j;const sisaN=pg.nj-sk.nj;const sisaE=pg.eba-sk.eba;
 ag+=`<div class="ac"><div class="al">${u}</div><div class="av">${fmt(a.t)}</div><div class="ax">
-<div><strong>J</strong> &nbsp;PJ: ${ff(a.j)}&nbsp;&nbsp;Sisa: <span style="color:${sisaJ<0?'var(--red)':'var(--tx2)'}">${ff(sisaJ)}</span></div>
-<div><strong>Non-J</strong> &nbsp;PJ: ${ff(a.nj)}&nbsp;&nbsp;Sisa: <span style="color:${sisaN<0?'var(--red)':'var(--tx2)'}">${ff(sisaN)}</span></div>
-${a.eba>0||pg.eba>0?`<div><strong>Perkantoran</strong> &nbsp;PJ: ${ff(a.eba)}&nbsp;&nbsp;Sisa: <span style="color:${sisaE<0?'var(--red)':'var(--tx2)'}">${ff(sisaE)}</span></div>`:''}
+<div style="font-weight:600;margin-top:4px">Jaldis</div>
+<div>Realisasi: ${ff(sk.j)}</div>
+<div>Sisa: <span style="color:${sisaJ<0?'var(--red)':'var(--tx2)'}">${ff(sisaJ)}</span></div>
+<div style="font-weight:600;margin-top:4px">Non-Jaldis</div>
+<div>Realisasi: ${ff(sk.nj)}</div>
+<div>Sisa: <span style="color:${sisaN<0?'var(--red)':'var(--tx2)'}">${ff(sisaN)}</span></div>
+${sk.eba>0||pg.eba>0?`<div style="font-weight:600;margin-top:4px">Perkantoran</div><div>Realisasi: ${ff(sk.eba)}</div><div>Sisa: <span style="color:${sisaE<0?'var(--red)':'var(--tx2)'}">${ff(sisaE)}</span></div>`:''}
 </div></div>`;});
 ag+='</div></div>';
 let tb='';for(const[dk,dv] of Object.entries(DIR)){const dp=dP(dk),dr=dR(dk);tb+=`<tr class="dir-row"><td colspan="2"><strong>${dv.label}</strong></td><td class="n" style="font-weight:700">${ff(dp)}</td><td class="n" style="font-weight:700">${ff(dr)}</td><td class="n">${dp>0?pc(dr/dp):'-'}</td><td class="n" style="font-weight:700">${ff(dp-dr)}</td></tr>`;
@@ -412,12 +433,16 @@ gA(oc,k.c).forEach(a=>{const isJ=a.c.startsWith('524');tb+=`<tr class="ar"><td>$
 c.innerHTML+=`<div class="card">${ag}<div class="ch"><h2>Detail anggaran</h2></div><div class="st" style="max-height:600px"><table><thead><tr><th>Kode</th><th>Uraian</th><th class="n">Pagu</th><th class="n">SAKTI</th><th class="n">%</th><th class="n">Sisa</th></tr></thead><tbody>${tb}</tbody></table></div></div>`;}
 
 // ========== TAB: REKONSILIASI ==========
+function nmoT(oc){return PJ.filter(r=>r.out===oc).reduce((s,r)=>s+(r.nmo||0),0)}
 function rRc(c){const outs=gO().filter(o=>o.c!=='FAN.ZZ1');
-let sp='<div class="as"><h3>SPBY Done vs SAKTI</h3><table style="font-size:12px"><thead><tr><th>Output</th><th class="n">SAKTI</th><th class="n">SPBY</th><th class="n">Selisih</th><th>Status</th></tr></thead><tbody>';
-outs.forEach(o=>{const st=PJ.filter(r=>r.out===o.c&&r.sd).reduce((s,r)=>s+r.amt,0);const gap=o.r-st;const ag=Math.abs(gap);sp+=`<tr><td>${o.c} — ${ON[o.c]||''}</td><td class="n">${ff(o.r)}</td><td class="n">${ff(st)}</td><td class="n" style="font-weight:600">${ff(gap)}</td><td><span class="b ${ag<1000?'bg':ag<100000?'ba':'br'}">${ag<1000?'OK':gap>0?'SAKTI>SPBY':'SPBY>SAKTI'}</span></td></tr>`;});sp+='</tbody></table></div>';
-let tb='';outs.forEach(o=>{const pt=pT(o.c);const gap=pt-o.r;tb+=`<tr class="or" onclick="tgl('r_${o.c}')"><td><span class="ei ${exSet.has('r_'+o.c)?'op':''}">&#9654;</span> ${o.c} — ${ON[o.c]||''}</td><td class="n">${ff(o.r)}</td><td class="n">${ff(pt)}</td><td class="n" style="font-weight:600;color:${Math.abs(gap)<1000?'var(--accent)':gap>0?'var(--amber)':'var(--red)'}">${ff(gap)}</td><td>${Math.abs(gap)<1000?'<span class="b bg">OK</span>':gap>0?`<span class="b ba">PJ>SAKTI</span>`:`<span class="b br">PJ<SAKTI</span>`}</td></tr>`;
-if(exSet.has('r_'+o.c)){gK(o.c).forEach(k=>{const kp=PJ.filter(r=>r.out===o.c&&r.komp===k.c).reduce((s,r)=>s+r.amt,0);const kg=kp-k.r;tb+=`<tr class="kr ${kp>k.p*1.05?'fr':''}"><td>${k.c} — ${k.d.substring(0,50)}${kp>k.p*1.05?' <span class="b br">!</span>':''}</td><td class="n">${ff(k.r)}</td><td class="n">${ff(kp)}</td><td class="n" style="color:${Math.abs(kg)<1000?'var(--accent)':kg>0?'var(--amber)':'var(--red)'}">${ff(kg)}</td><td></td></tr>`;});}});
-c.innerHTML+=`<div class="card">${sp}<div class="ch"><h2>Rekonsiliasi — SAKTI vs PJ</h2></div><div class="st" style="max-height:500px"><table><thead><tr><th>Output</th><th class="n">SAKTI</th><th class="n">PJ</th><th class="n">Selisih</th><th>Status</th></tr></thead><tbody>${tb}</tbody></table></div></div>`;}
+// Merged table: Output (expandable), SAKTI, PJ, SPBY (NILAI MODEL O), SELISIH (SAKTI-SPBY), STATUS
+let tb='';outs.forEach(o=>{
+const pt=pT(o.c);const spbyAmt=nmoT(o.c);const gap=o.r-spbyAmt;const isE=exSet.has('r_'+o.c);
+const statusCls=Math.abs(gap)<1000?'bg':gap>0?'ba':'br';const statusTxt=Math.abs(gap)<1000?'OK':gap>0?'SAKTI>SPBY':'SPBY>SAKTI';
+tb+=`<tr class="or" onclick="tgl('r_${o.c}')"><td><span class="ei ${isE?'op':''}">&#9654;</span> <strong>${o.c}</strong> — ${ON[o.c]||''}</td><td class="n">${ff(o.r)}</td><td class="n">${ff(pt)}</td><td class="n">${ff(spbyAmt)||'—'}</td><td class="n" style="font-weight:600;color:${Math.abs(gap)<1000?'var(--accent)':gap>0?'var(--amber)':'var(--red)'}">${ff(gap)}</td><td><span class="b ${statusCls}">${statusTxt}</span></td></tr>`;
+if(isE){gK(o.c).forEach(k=>{const kp=PJ.filter(r=>r.out===o.c&&r.komp===k.c).reduce((s,r)=>s+r.amt,0);const ks=PJ.filter(r=>r.out===o.c&&r.komp===k.c).reduce((s,r)=>s+(r.nmo||0),0);const kg=k.r-ks;
+tb+=`<tr class="kr"><td>${k.c} — ${k.d.substring(0,50)}</td><td class="n">${ff(k.r)}</td><td class="n">${ff(kp)}</td><td class="n">${ff(ks)||'—'}</td><td class="n" style="color:${Math.abs(kg)<1000?'var(--accent)':kg>0?'var(--amber)':'var(--red)'}">${ff(kg)}</td><td></td></tr>`;});}});
+c.innerHTML+=`<div class="card"><div class="ch"><h2>Rekonsiliasi</h2><div style="font-size:11px;color:var(--tx3)">SPBY = Nilai Model O dari sheet PJ</div></div><div class="st" style="max-height:550px"><table><thead><tr><th>Output / Subkomponen</th><th class="n">SAKTI</th><th class="n">PJ</th><th class="n">SPBY</th><th class="n">Selisih (SAKTI-SPBY)</th><th>Status</th></tr></thead><tbody>${tb}</tbody></table></div></div>`;}
 
 // ========== TAB: RPD ==========
 function rRPD(c){
@@ -458,7 +483,7 @@ setH+=`</div><div style="margin-top:12px;display:flex;gap:8px">
 </div></div></div>`;
 
 // Kebutuhan table
-let tbH=`<div class="card"><div class="ch"><h2>Kebutuhan per Direktorat</h2><div style="font-size:12px;color:var(--tx2)">Berdasarkan SAKTI saat ini</div></div><div class="st"><table class="rpd-table"><thead><tr><th>Direktorat</th><th class="n">Pagu</th><th class="n">SAKTI</th>`;
+let tbH=`<div class="card"><div class="ch"><h2>Kebutuhan Realisasi per Direktorat</h2><div style="font-size:12px;color:var(--tx2)">Berdasarkan SAKTI saat ini</div></div><div class="st"><table class="rpd-table"><thead><tr><th>Direktorat</th><th class="n">Pagu</th><th class="n">SAKTI</th>`;
 TW_LABELS.forEach((l,i)=>{const lapsed=i<curTW;const cur=i===curTW;tbH+=`<th class="n ${lapsed?'tw-lapsed':cur?'tw-current':''}">${l}<br><small style="font-weight:400;font-size:10px">(${pct[i]}%)</small></th>`;});
 tbH+=`</tr></thead><tbody>`;
 
@@ -568,7 +593,7 @@ ${srt('spby','SPBY')}
 </tr></thead><tbody>`;
 
 shown.forEach((r,i)=>{
-const isMak=!r.out||!ALL_OUTPUTS.has(r.out);
+const isMak=!r.kode_raw||(r.kode_raw.replace(/\.?\d{6}.*$/,'').split('.').filter(Boolean).length<5);
 const rowCls=r.dup?'dr':isMak?'mak-row':'';
 const flags=(r.dup?'<span class="b bp">DUP</span> ':'')+(isMak?'<span class="b br">MAK</span>':'');
 const absIdx=recs.indexOf(r);
@@ -605,12 +630,13 @@ c.innerHTML+=`<div class="metrics"><div class="mc"><div class="ml">Total pagu</d
 let tb='';for(const[dk,dv] of Object.entries(DIR)){const dp=dP(dk),dpj=dPJ(dk),dfJ=dFcJ(dk),dfN=dFcN(dk),dfc=dfJ+dfN,sisa=dp-dpj-dfc,mo=sisa>0?sisa/ML:0,isD=dk==='Direktif';
 const sisaJCalc=sisa>0?Math.round(sisa*(dfJ+dPJ_J(dk))/Math.max(dfc+dpj,1)):0;const sisaNCalc=sisa-sisaJCalc;
 tb+=`<tr${isD?' style="color:var(--tx3);font-style:italic"':''}><td><strong>${dv.label}</strong></td><td class="n">${fmt(dp)}</td><td class="n">${fmt(dpj)}</td><td class="n" style="font-weight:600">${fmt(dfc)}</td><td class="n">${fmt(dfJ)}</td><td class="n">${fmt(dfN)}</td><td class="n" style="font-weight:600">${fmt(sisa)}</td><td class="n">${fmt(sisaJCalc)}</td><td class="n">${fmt(sisaNCalc)}</td><td class="n">${isD?'<span class="b ba">Menunggu</span>':sisa<=0?'<span class="b br">Melebihi!</span>':`<span class="b bb2">${fmt(mo)}/bln</span>`}</td></tr>`;}
-c.innerHTML+=`<div class="card"><div class="ch"><h2>Proyeksi per direktorat</h2><div style="font-size:12px;color:var(--tx2)">${ML} bln tersisa</div></div><div class="st"><table><thead><tr><th rowspan="2">Dir.</th><th rowspan="2" class="n">Pagu</th><th rowspan="2" class="n">PJ</th><th colspan="3" class="n" style="text-align:center;border-bottom:1px solid var(--bd)">Forecast</th><th colspan="3" class="n" style="text-align:center;border-bottom:1px solid var(--bd)">Sisa</th><th rowspan="2" class="n">Kebutuhan/bln</th></tr><tr><th class="n" style="font-size:10px!important">Total</th><th class="n" style="font-size:10px!important">Jaldis</th><th class="n" style="font-size:10px!important">Non-J</th><th class="n" style="font-size:10px!important">Total</th><th class="n" style="font-size:10px!important">Jaldis</th><th class="n" style="font-size:10px!important">Non-J</th></tr></thead><tbody>${tb}</tbody></table></div></div>`;
+if(!_fcCollapse.proj){c.innerHTML+=`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.proj=true;render()"><h2>Proyeksi per direktorat ▼</h2><div style="font-size:12px;color:var(--tx2)">${ML} bln tersisa</div></div><div class="st"><table><thead><tr><th rowspan="2">Dir.</th><th rowspan="2" class="n">Pagu</th><th rowspan="2" class="n">PJ</th><th colspan="3" class="n" style="text-align:center;border-bottom:1px solid var(--bd)">Forecast</th><th colspan="3" class="n" style="text-align:center;border-bottom:1px solid var(--bd)">Sisa</th><th rowspan="2" class="n">Kebutuhan/bln</th></tr><tr><th class="n" style="font-size:10px!important">Total</th><th class="n" style="font-size:10px!important">Jaldis</th><th class="n" style="font-size:10px!important">Non-J</th><th class="n" style="font-size:10px!important">Total</th><th class="n" style="font-size:10px!important">Jaldis</th><th class="n" style="font-size:10px!important">Non-J</th></tr></thead><tbody>${tb}</tbody></table></div></div>`;}else{c.innerHTML+=`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.proj=false;render()"><h2>Proyeksi per direktorat ▶ <small style="font-weight:400;font-size:12px;color:var(--tx3)">(klik untuk buka)</small></h2></div></div>`;}
 
 // Proyeksi RPD table
 const now=new Date();const curTW=now.getMonth()<3?0:now.getMonth()<6?1:now.getMonth()<9?2:3;
 const pct=rpdSettings.pct;
-let rpdH=`<div class="card"><div class="ch"><h2>Proyeksi RPD</h2><div style="font-size:12px;color:var(--tx2)">PJ + Forecast vs target RPD triwulanan</div></div><div class="st"><table class="rpd-table"><thead><tr><th>Direktorat</th>`;
+let rpdH=_fcCollapse.rpd?`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.rpd=false;render()"><h2>Proyeksi RPD ▶ <small style="font-weight:400;font-size:12px;color:var(--tx3)">(klik untuk buka)</small></h2></div></div>`:``;
+if(!_fcCollapse.rpd)rpdH+=`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.rpd=true;render()"><h2>Proyeksi RPD ▼</h2><div style="font-size:12px;color:var(--tx2)">PJ + Forecast vs target RPD triwulanan</div></div><div class="st"><table class="rpd-table"><thead><tr><th>Direktorat</th>`;
 TW_LABELS.forEach((l,i)=>{const lapsed=i<curTW;const cur=i===curTW;rpdH+=`<th class="n ${lapsed?'tw-lapsed':cur?'tw-current':''}">${l}${lapsed?' ✓':cur?' ◀':''}<br><small style="font-weight:400;font-size:10px">Target ${pct[i]}%</small></th>`;});
 rpdH+=`</tr></thead><tbody>`;
 DK.filter(d=>d!=='Direktif').forEach(dk=>{
@@ -631,9 +657,9 @@ ${fmt(proj)}<br>
 <small style="font-size:10px;color:var(--tx3)">${gap>=0?'&#10003;':''} ${gap>=0?'Melebihi +'+fmt(gap):'Kurang '+fmt(Math.abs(gap))}</small>
 </td>`;});
 rpdH+='</tr>';});
-rpdH+=`</tbody></table></div>
+if(!_fcCollapse.rpd){rpdH+=`</tbody></table></div>
 <div style="padding:8px 16px;font-size:11px;color:var(--tx3)">★ TW saat ini: <strong>${TW_LABELS[curTW]}</strong> | Proyeksi TW mendatang menggunakan SAKTI + Forecast yang sudah diinput. Forecast tanpa WAKTU dihitung untuk semua TW.</div>
-</div>`;
+</div>`;}
 c.innerHTML+=rpdH;
 
 // Input form
@@ -673,7 +699,7 @@ if(fcFilterDir!=='ALL')fil=fil.filter(f=>f.dir===fcFilterDir);
 if(fcFilterType==='jaldis')fil=fil.filter(f=>(f.maks||[]).some(m=>m.mak.startsWith('524')));
 if(fcFilterType==='nonjaldis')fil=fil.filter(f=>(f.maks||[]).some(m=>m.mak&&!m.mak.startsWith('524')));
 // Tanggal filter — based on WAKTU quarter
-if(fcFilterTgl!=='ALL'){const tw=parseInt(fcFilterTgl);fil=fil.filter(f=>{const ftw=fcWaktuTw(f);return ftw===tw||(ftw===null&&fcFilterTgl==='ALL')});}
+if(fcFilterTgl!=='ALL'){const tw=parseInt(fcFilterTgl);fil=fil.filter(f=>{const ftw=fcWaktuTw(f);return ftw===tw;});}
 const fdo=DK.filter(d=>d!=='Direktif').map(d=>`<option value="${d}" ${fcFilterDir===d?'selected':''}>${DIR[d].label}</option>`).join('');
 let fl=fil.map(fc=>{const jT=(fc.maks||[]).filter(m=>m.mak.startsWith('524')).reduce((s,m)=>s+m.amt,0);const nT=(fc.maks||[]).filter(m=>!m.mak.startsWith('524')).reduce((s,m)=>s+m.amt,0);
 const stBtn=fc.status==='forecast'?`<button class="btn btn-sm bg" onclick="toggleSt('${fc.id}','submitted')" title="Klik untuk ubah ke Sudah PJ">&#9679; Forecast</button>`:`<button class="btn btn-sm" style="background:var(--accent-bg);color:var(--accent);border-color:var(--accent)" onclick="toggleSt('${fc.id}','forecast')" title="Klik untuk ubah kembali ke Forecast">&#10003; Sudah PJ</button>`;
@@ -698,8 +724,28 @@ if(mode==='week'){const parts=w.slice(1).split('/');const wk=parts[0]||'';const 
 return`<select onchange="setWaktuPart('w',this.value)" style="width:90px"><option value="">Minggu ke-</option>${[1,2,3,4].map(n=>`<option value="${n}" ${parseInt(wk)===n?'selected':''}>Minggu ${n}</option>`).join('')}</select><select onchange="setWaktuPart('m',this.value)" style="width:70px"><option value="">Bln</option>${[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>`<option value="${m}" ${parseInt(mm)===m?'selected':''}>${m}</option>`).join('')}</select><input type="text" placeholder="YYYY" value="${yy}" oninput="setWaktuPart('y',this.value)" style="width:70px">`}
 if(mode==='month'){const parts=w.split('/');
 return`<select onchange="setWaktuPart('mm',this.value)" style="width:70px"><option value="">Bln</option>${[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>`<option value="${m}" ${parseInt(parts[0])===m?'selected':''}>${m}</option>`).join('')}</select><input type="text" placeholder="YYYY" value="${parts[1]||''}" oninput="setWaktuPart('my',this.value)" style="width:70px">`}
-return`<input type="text" placeholder="DD/MM/YYYY" value="${w}" oninput="fcForm.waktu=this.value;updWaktuDisp()" style="width:120px">`}
+// masked DD/MM/YYYY input
+const dd=w.substring(0,2)||'';const mm2=w.substring(3,5)||'';const yy2=w.substring(6,10)||'';
+return`<div style="display:flex;align-items:center;gap:2px;font-family:'JetBrains Mono',monospace">
+<input type="text" maxlength="2" placeholder="DD" value="${dd}" oninput="setWaktuMask('d',this.value)" style="width:36px;text-align:center">
+<span style="color:var(--tx3)">/</span>
+<input type="text" maxlength="2" placeholder="MM" value="${mm2}" oninput="setWaktuMask('m',this.value)" style="width:36px;text-align:center">
+<span style="color:var(--tx3)">/</span>
+<input type="text" maxlength="4" placeholder="YYYY" value="${yy2}" oninput="setWaktuMask('y',this.value)" style="width:56px;text-align:center">
+</div>`}
 
+window.setWaktuMask=function(part,v){
+const w=fcForm.waktu||'__/__/____';
+const parts=[w.substring(0,2),w.substring(3,5),w.substring(6,10)];
+if(part==='d')parts[0]=v.padStart(2,'_').substring(0,2);
+else if(part==='m')parts[1]=v.padStart(2,'_').substring(0,2);
+else parts[2]=v.padStart(4,'_').substring(0,4);
+const nw=parts[0]+'/'+parts[1]+'/'+parts[2];
+// only update if not all underscores
+fcForm.waktu=nw.replace(/_/g,'').replace(/\/+$/,'');
+// reconstruct full if all 3 filled
+if(parts[0].match(/^\d{2}$/)&&parts[1].match(/^\d{2}$/)&&parts[2].match(/^\d{4}$/))fcForm.waktu=parts[0]+'/'+parts[1]+'/'+parts[2];
+const disp=document.getElementById('waktuVal2');if(disp)disp.textContent=fcForm.waktu;};
 window.updWaktuPrec=function(){
 const sel=document.getElementById('waktuPrec');if(!sel)return;
 const mode=sel.value;
