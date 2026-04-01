@@ -315,6 +315,9 @@ outs.forEach(oc=>{B.filter(r=>r.l==='A'&&r.pr===oc).forEach(a=>{
 if(a.c.startsWith('524'))j+=a.p;else if(oc==='EBA.994')eba+=a.p;else nj+=a.p;});});
 return{j,nj,eba}}
 
+// Waktu sort key: converts any waktu format to a YYYY-MM-DD-comparable string
+function waktuToSortKey(w){if(!w)return'9999-12-31';w=normalizeWaktu(w);if(w.match(/^\d{2}\/\d{2}\/\d{4}$/)){const[dd,mm,yy]=w.split('/');return yy+'-'+mm+'-'+dd;}if(w.startsWith('W')){const p=w.slice(1).split('/');const yy=p[2]||'9999',mm=String(p[1]||'12').padStart(2,'0'),wk=p[0]||'4';return yy+'-'+mm+'-W'+wk;}if(w.match(/^\d{1,2}\/\d{4}$/)){const[m,y]=w.split('/');return y+'-'+m.padStart(2,'0')+'-00';}return'9999-12-31';}
+
 // Kegiatan JSON encoding (backward-compat: also handles plain strings)
 function parseKegiatan(fc){const k=fc.kegiatan||'';if(k.startsWith('{')){try{const p=JSON.parse(k);return{text:p.text||k,lokasi:p.lokasi||'',ket:p.ket||''};}catch(e){}}return{text:k,lokasi:'',ket:''};}
 function encodeKegiatan(text,lokasi,ket){if(!lokasi&&!ket)return text;return JSON.stringify({text,lokasi,ket});}
@@ -364,7 +367,7 @@ return null}
 let cTab='overview',exSet=new Set(),selOut='ALL',pjQ='',pjSrc='ALL';
 let pjUnit='ALL',pjBulan='ALL',pjAkun='ALL',pjSpby='ALL',pjFlag='ALL';
 let pjSort='',pjSortDir=1,pjModalIdx=null;
-let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL';
+let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL',fcSortBy='default',fcSortDir=1;
 let fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',lokasi:'',ket:'',status:'forecast',waktu:''};
 let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[15,50,70,100],includeDirektif:false};
 if(!rpdSettings.hasOwnProperty('includeDirektif'))rpdSettings.includeDirektif=false;
@@ -699,7 +702,10 @@ rpdH+=`</tbody></table></div>
 c.innerHTML+=rpdH;
 
 // Input form
-const makOpts=Object.entries(MAK).map(([k,v])=>`<option value="${k}">${k} — ${v}</option>`).join('');
+const _BTM_MAK=new Set(['521111','521113','521114','521115','521119','521252','521811','522112','522119','523121']);
+const _makTop=Object.entries(MAK).filter(([k])=>!_BTM_MAK.has(k));
+const _makBtm=Object.entries(MAK).filter(([k])=>_BTM_MAK.has(k));
+const makOpts=[..._makTop.map(([k,v])=>`<option value="${k}">${k} — ${v}</option>`),`<option disabled>── Lainnya ────────────────────</option>`,..._makBtm.map(([k,v])=>`<option value="${k}">${k} — ${v}</option>`)].join('');
 const dirOpts=DK.filter(d=>d!=='Direktif').map(d=>`<option value="${d}" ${fcForm.dir===d?'selected':''}>${DIR[d].label}</option>`).join('');
 let makH='';fcForm.maks.forEach((m,i)=>{makH+=`<div class="mak-entry"><select onchange="fcForm.maks[${i}].mak=this.value" style="min-width:260px"><option value="">— Pilih akun —</option>${makOpts.replace('value="'+m.mak+'"','value="'+m.mak+'" selected')}</select><input type="number" placeholder="Kebutuhan (Rp)" value="${m.amt||''}" onchange="fcForm.maks[${i}].amt=parseFloat(this.value)||0;updT()" style="width:160px">${i>0?`<button class="btn btn-sm btn-r" onclick="fcForm.maks.splice(${i},1);render()">&#10005;</button>`:''}</div>`;});
 const fcTot=fcForm.maks.reduce((s,m)=>s+(m.amt||0),0);
@@ -740,6 +746,9 @@ if(fcFilterType==='jaldis')fil=fil.filter(f=>(f.maks||[]).some(m=>m.mak.startsWi
 if(fcFilterType==='nonjaldis')fil=fil.filter(f=>(f.maks||[]).some(m=>m.mak&&!m.mak.startsWith('524')));
 // Tanggal filter — based on WAKTU quarter
 if(fcFilterTgl!=='ALL'){const tw=parseInt(fcFilterTgl);fil=fil.filter(f=>{const ftw=fcWaktuTw(f);return ftw===tw;});}
+// Sort
+if(fcSortBy==='waktu'){fil.sort((a,b)=>fcSortDir*waktuToSortKey(a.waktu).localeCompare(waktuToSortKey(b.waktu)));}
+else if(fcSortBy==='input'){fil.sort((a,b)=>{const ka=a.id&&a.id.startsWith('l_')?parseInt(a.id.slice(2)):forecasts.indexOf(a);const kb=b.id&&b.id.startsWith('l_')?parseInt(b.id.slice(2)):forecasts.indexOf(b);return fcSortDir*(ka-kb);});}
 const fdo=DK.filter(d=>d!=='Direktif').map(d=>`<option value="${d}" ${fcFilterDir===d?'selected':''}>${DIR[d].label}</option>`).join('');
 let fl=fil.map(fc=>{const jT=(fc.maks||[]).filter(m=>m.mak.startsWith('524')).reduce((s,m)=>s+m.amt,0);const nT=(fc.maks||[]).filter(m=>!m.mak.startsWith('524')).reduce((s,m)=>s+m.amt,0);
 const kp=parseKegiatan(fc);
@@ -753,6 +762,8 @@ c.innerHTML+=`<div class="card"><div class="ch"><h2>Daftar forecast (${forecasts
 <div class="filter-group"><div class="filter-label">Direktorat</div><select onchange="fcFilterDir=this.value;render()"><option value="ALL" ${fcFilterDir==='ALL'?'selected':''}>Semua</option>${fdo}</select></div>
 <div class="filter-group"><div class="filter-label">Jaldis/Non-Jaldis</div><select onchange="fcFilterType=this.value;render()"><option value="ALL" ${fcFilterType==='ALL'?'selected':''}>Semua</option><option value="jaldis" ${fcFilterType==='jaldis'?'selected':''}>Jaldis</option><option value="nonjaldis" ${fcFilterType==='nonjaldis'?'selected':''}>Non-Jaldis</option></select></div>
 <div class="filter-group"><div class="filter-label">Triwulan</div><select onchange="fcFilterTgl=this.value;render()"><option value="ALL" ${fcFilterTgl==='ALL'?'selected':''}>Semua TW</option>${TW_LABELS.map((l,i)=>`<option value="${i+1}" ${fcFilterTgl===String(i+1)?'selected':''}>${l}</option>`).join('')}</select></div>
+<div class="filter-group"><div class="filter-label">Urutkan</div><select onchange="fcSortBy=this.value;render()"><option value="default" ${fcSortBy==='default'?'selected':''}>Default</option><option value="input" ${fcSortBy==='input'?'selected':''}>Tgl Input</option><option value="waktu" ${fcSortBy==='waktu'?'selected':''}>Waktu Kegiatan</option></select></div>
+<button class="btn btn-sm" onclick="fcSortDir=-fcSortDir;render()" style="align-self:flex-end;min-width:40px" title="Klik untuk ubah urutan">${fcSortDir===1?'↑ Asc':'↓ Desc'}</button>
 <span style="font-size:12px;color:var(--tx2);align-self:flex-end">${fil.length}/${forecasts.length}</span>
 </div>
 <div style="padding:12px;max-height:400px;overflow-y:auto">${fl||'<div style="padding:20px;text-align:center;color:var(--tx3)">Kosong</div>'}</div></div>`;}
@@ -760,21 +771,29 @@ c.innerHTML+=`<div class="card"><div class="ch"><h2>Daftar forecast (${forecasts
 
 function dPJ_J(dk){return DIR[dk].outputs.reduce((s,oc)=>s+PJ.filter(r=>r.out===oc&&r.akun.startsWith('524')).reduce((a,r)=>a+r.amt,0),0)}
 
+const _YRS=['2026','2027','2028','2029'];
+function _yrSel(cur,handler){return`<select onchange="${handler}" style="width:75px">${_YRS.map(y=>`<option value="${y}" ${(cur||'2026')===y?'selected':''}>${y}</option>`).join('')}</select>`;}
 function buildWaktuInput(){
 const w=fcForm.waktu||'';
 let mode='full';if(w.startsWith('W'))mode='week';else if(w.match(/^\d{1,2}\/\d{4}$/))mode='month';
-if(mode==='week'){const parts=w.slice(1).split('/');const wk=parts[0]||'';const mm=parts[1]||'';const yy=parts[2]||'';
-return`<select onchange="setWaktuPart('w',this.value)" style="width:90px"><option value="">Minggu ke-</option>${[1,2,3,4].map(n=>`<option value="${n}" ${parseInt(wk)===n?'selected':''}>Minggu ${n}</option>`).join('')}</select><select onchange="setWaktuPart('m',this.value)" style="width:70px"><option value="">Bln</option>${[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>`<option value="${m}" ${parseInt(mm)===m?'selected':''}>${m}</option>`).join('')}</select><input type="text" placeholder="YYYY" value="${yy}" oninput="setWaktuPart('y',this.value)" style="width:70px">`}
-if(mode==='month'){const parts=w.split('/');
-return`<select onchange="setWaktuPart('mm',this.value)" style="width:70px"><option value="">Bln</option>${[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>`<option value="${m}" ${parseInt(parts[0])===m?'selected':''}>${m}</option>`).join('')}</select><input type="text" placeholder="YYYY" value="${parts[1]||''}" oninput="setWaktuPart('my',this.value)" style="width:70px">`}
-// masked DD/MM/YYYY input
-const dd=w.substring(0,2)||'';const mm2=w.substring(3,5)||'';const yy2=w.substring(6,10)||'';
-return`<div style="display:flex;align-items:center;gap:2px;font-family:'JetBrains Mono',monospace">
-<input type="text" maxlength="2" placeholder="DD" value="${dd}" oninput="setWaktuMask('d',this.value)" style="width:36px;text-align:center">
+if(mode==='week'){const parts=w.slice(1).split('/');const wk=parts[0]||'';const mm=parts[1]||'';const yy=parts[2]||'2026';
+const mnOpts=[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>`<option value="${m}" ${parseInt(mm)===m?'selected':''}>${m}</option>`).join('');
+return`<select onchange="setWaktuPart('w',this.value)" style="width:105px"><option value="">Minggu ke-</option>${[1,2,3,4].map(n=>`<option value="${n}" ${parseInt(wk)===n?'selected':''}>Minggu ${n}</option>`).join('')}</select><select onchange="setWaktuPart('m',this.value)" style="width:65px"><option value="">Bln</option>${mnOpts}</select>${_yrSel(yy,"setWaktuPart('y',this.value)")}`}
+if(mode==='month'){const parts=w.split('/');const yy=parts[1]||'2026';
+const mnOpts2=[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>`<option value="${m}" ${parseInt(parts[0])===m?'selected':''}>${m}</option>`).join('');
+return`<select onchange="setWaktuPart('mm',this.value)" style="width:65px"><option value="">Bln</option>${mnOpts2}</select>${_yrSel(yy,"setWaktuPart('my',this.value)")}`}
+// DD/MM/YYYY — all dropdowns
+const dd=w.match(/^\d{2}\//)?(w.substring(0,2)):'';
+const mm2=w.length>=5&&w[2]==='/'?(w.substring(3,5)):'';
+const yy2=w.length>=10?(w.substring(6,10)):'2026';
+const ddOpts=Array.from({length:31},(_,i)=>String(i+1).padStart(2,'0')).map(d=>`<option value="${d}" ${dd===d?'selected':''}>${d}</option>`).join('');
+const mmOpts=Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0')).map(m=>`<option value="${m}" ${mm2===m?'selected':''}>${m}</option>`).join('');
+return`<div style="display:flex;align-items:center;gap:4px">
+<select onchange="setWaktuDrop('d',this.value)" style="width:65px"><option value="">DD</option>${ddOpts}</select>
 <span style="color:var(--tx3)">/</span>
-<input type="text" maxlength="2" placeholder="MM" value="${mm2}" oninput="setWaktuMask('m',this.value)" style="width:36px;text-align:center">
+<select onchange="setWaktuDrop('m',this.value)" style="width:65px"><option value="">MM</option>${mmOpts}</select>
 <span style="color:var(--tx3)">/</span>
-<input type="text" maxlength="4" placeholder="YYYY" value="${yy2}" oninput="setWaktuMask('y',this.value)" style="width:56px;text-align:center">
+${_yrSel(yy2,"setWaktuDrop('y',this.value)")}
 </div>`}
 
 window.setWaktuMask=function(part,v){
@@ -792,9 +811,22 @@ const disp=document.getElementById('waktuVal2');if(disp)disp.textContent=fcForm.
 window.updWaktuPrec=function(){
 const sel=document.getElementById('waktuPrec');if(!sel)return;
 const mode=sel.value;
-if(mode==='full')fcForm.waktu='';
-else if(mode==='week')fcForm.waktu='W1/1/'+new Date().getFullYear();
-else if(mode==='month')fcForm.waktu='1/'+new Date().getFullYear();
+if(mode==='full')fcForm.waktu='__/__/2026';
+else if(mode==='week')fcForm.waktu='W1/1/2026';
+else if(mode==='month')fcForm.waktu='1/2026';
+render();}
+window.setWaktuDrop=function(part,v){
+const w=fcForm.waktu||'__/__/2026';
+const dd=w.length>=2?w.substring(0,2):'__';
+const mm=w.length>=5?w.substring(3,5):'__';
+const yy=w.length>=10?w.substring(6,10):'2026';
+let ndd=dd,nmm=mm,nyy=yy;
+if(part==='d')ndd=v||'__';
+else if(part==='m')nmm=v||'__';
+else if(part==='y')nyy=v||'2026';
+// Only store full valid date when DD and MM are chosen
+if(ndd.match(/^\d{2}$/)&&nmm.match(/^\d{2}$/))fcForm.waktu=ndd+'/'+nmm+'/'+nyy;
+else fcForm.waktu=ndd+'/'+nmm+'/'+nyy;
 render();}
 window.setWaktuPart=function(part,v){
 const w=fcForm.waktu||'';
