@@ -214,7 +214,7 @@ let forecasts=[];
 async function loadFc(){
 if(!SCRIPT_URL){forecasts=JSON.parse(localStorage.getItem('amerop_fc_v8')||'[]');loadStatus.fc='local';return}
 try{const r=await fetch(SCRIPT_URL);const j=await r.json();
-if(j.success&&j.data){const all=j.data.map(row=>({id:row.id,dir:row.dir,kegiatan:row.kegiatan,status:row.status,maks:JSON.parse(row.maks_json||'[]'),total:parseFloat(row.total)||0,waktu:row.waktu||''}));
+if(j.success&&j.data){const all=j.data.map(row=>({id:row.id,dir:row.dir,kegiatan:row.kegiatan,status:row.status,maks:JSON.parse(row.maks_json||'[]'),total:parseFloat(row.total)||0,waktu:normalizeWaktu(row.waktu||'')}));
 // Extract settings entry
 const se=all.find(f=>f.dir==='__settings__'||f.status==='settings');
 if(se){_settingsFcId=se.id;try{const sd=JSON.parse(se.kegiatan||'{}');if(sd.fa_asof){faAsOf=sd.fa_asof;localStorage.setItem('amerop_fa_asof',faAsOf)}if(sd.rpd&&sd.rpd.length===4){rpdSettings={pct:sd.rpd};localStorage.setItem('amerop_rpd',JSON.stringify(rpdSettings))}}catch(ex){}}
@@ -230,7 +230,7 @@ const j=await r.json();if(!j.success)throw new Error(j.error);
 if(data.waktu!==undefined){const w=JSON.parse(localStorage.getItem('amerop_fc_waktu')||'{}');if(data.id)w[data.id]=data.waktu;localStorage.setItem('amerop_fc_waktu',JSON.stringify(w))}
 toast(action==='delete'?'Dihapus':'Disimpan','ok');await loadFc();
 // merge waktu from localStorage
-const wStore=JSON.parse(localStorage.getItem('amerop_fc_waktu')||'{}');forecasts.forEach(f=>{if(!f.waktu&&wStore[f.id])f.waktu=wStore[f.id]});
+const wStore=JSON.parse(localStorage.getItem('amerop_fc_waktu')||'{}');forecasts.forEach(f=>{if(!f.waktu&&wStore[f.id])f.waktu=normalizeWaktu(wStore[f.id]);else if(f.waktu)f.waktu=normalizeWaktu(f.waktu);});
 render();return true
 }catch(e){toast('Gagal: '+e.message,'err');return false}
 }else{if(action==='create'){data.id='l_'+Date.now();forecasts.push(data)}
@@ -319,8 +319,11 @@ return{j,nj,eba}}
 function parseKegiatan(fc){const k=fc.kegiatan||'';if(k.startsWith('{')){try{const p=JSON.parse(k);return{text:p.text||k,lokasi:p.lokasi||'',ket:p.ket||''};}catch(e){}}return{text:k,lokasi:'',ket:''};}
 function encodeKegiatan(text,lokasi,ket){if(!lokasi&&!ket)return text;return JSON.stringify({text,lokasi,ket});}
 
+// Waktu normalizer: converts GAS ISO strings back to DD/MM/YYYY using local time
+function normalizeWaktu(w){if(!w)return'';if(/^\d{4}-\d{2}-\d{2}T/.test(w)){const d=new Date(w);if(!isNaN(d)){return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();}}return w;}
+
 // Waktu display formatter
-function fmtWaktu(w){if(!w)return'';const BLN=['','Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];const BLNL=['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];if(w.startsWith('W')){const p=w.slice(1).split('/');const wk=p[0]||'',mm=parseInt(p[1]),yy=p[2]||'';return'Minggu ke-'+wk+(mm?', '+(BLN[mm]||p[1]):'')+' '+yy;}if(w.match(/^\d{1,2}\/\d{4}$/)){const p=w.split('/');return(BLNL[parseInt(p[0])]||p[0])+' '+p[1];}return w;}
+function fmtWaktu(w){if(!w)return'';w=normalizeWaktu(w);const BLN=['','Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];const BLNL=['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];if(w.startsWith('W')){const p=w.slice(1).split('/');const wk=p[0]||'',mm=parseInt(p[1]),yy=p[2]||'';return'Minggu ke-'+wk+(mm?', '+(BLN[mm]||p[1]):'')+' '+yy;}if(w.match(/^\d{1,2}\/\d{4}$/)){const p=w.split('/');return(BLNL[parseInt(p[0])]||p[0])+' '+p[1];}return w;}
 
 // Date helpers
 function fmtDt(dt){if(!dt)return'-';const p=dt.split('/');if(p.length<3)return dt;return p[1].padStart(2,'0')+'/'+p[0].padStart(2,'0')+'/'+p[2]}
@@ -817,7 +820,7 @@ const kegStr=encodeKegiatan(fcForm.kegiatan.trim(),fcForm.lokasi.trim(),fcForm.k
 if(fcEditId){await saveFc('update',{id:fcEditId,dir:fcForm.dir,maks:v,kegiatan:kegStr,status:fcForm.status,total:t,waktu})}
 else{const newId='l_'+Date.now();await saveFc('create',{id:newId,dir:fcForm.dir,maks:v,kegiatan:kegStr,status:fcForm.status,total:t,waktu})}
 resetForm();render()};
-window.editFc=function(id){const fc=forecasts.find(f=>f.id===id);if(!fc)return;fcEditId=id;const kp=parseKegiatan(fc);fcForm={dir:fc.dir,maks:(fc.maks||[]).map(m=>({mak:m.mak,amt:m.amt})),kegiatan:kp.text,lokasi:kp.lokasi,ket:kp.ket,status:fc.status,waktu:fc.waktu||''};if(!fcForm.maks.length)fcForm.maks=[{mak:'',amt:0}];render();setTimeout(()=>{const el=document.querySelector('.form-row');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})},50)};
+window.editFc=function(id){const fc=forecasts.find(f=>f.id===id);if(!fc)return;fcEditId=id;const kp=parseKegiatan(fc);fcForm={dir:fc.dir,maks:(fc.maks||[]).map(m=>({mak:m.mak,amt:m.amt})),kegiatan:kp.text,lokasi:kp.lokasi,ket:kp.ket,status:fc.status,waktu:normalizeWaktu(fc.waktu||'')};if(!fcForm.maks.length)fcForm.maks=[{mak:'',amt:0}];render();setTimeout(()=>{const el=document.querySelector('.form-row');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})},50)};
 window.delFc=async function(id){const fc=forecasts.find(f=>f.id===id);if(!confirm('Hapus "'+(fc?parseKegiatan(fc).text:'')+'"?'))return;await saveFc('delete',{id});if(fcEditId===id)resetForm();render()};
 window.tgl=function(c2){exSet.has(c2)?exSet.delete(c2):exSet.add(c2);render()};
 
