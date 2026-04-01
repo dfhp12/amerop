@@ -275,7 +275,14 @@ const bar=p=>{p=Math.min(Math.max(p||0,0),1)*100;const c=p<10?'low':p<25?'mid':p
 const DIR={'Dit KSIA Amerop':{outputs:['AEB.001'],label:'Dit KSIA Amerop'},'Dit Amerika I':{outputs:['AEC.001'],label:'Dit Amerika I'},'Dit Amerika II':{outputs:['AEC.002'],label:'Dit Amerika II'},'Dit Eropa I':{outputs:['AEC.003'],label:'Dit Eropa I'},'Dit Eropa II':{outputs:['AEC.004'],label:'Dit Eropa II'},'Setditjen':{outputs:['EBA.962','EBA.994','EBA.Z08','EBA.Z24'],label:'Setditjen Amerop'},'Direktif':{outputs:['FAN.ZZ1'],label:'Direktif Presiden'}};
 const ON={'AEB.001':'Dit KSIA Amerop','AEC.001':'Dit Amerika I','AEC.002':'Dit Amerika II','AEC.003':'Dit Eropa I','AEC.004':'Dit Eropa II','FAN.ZZ1':'Direktif Presiden','EBA.962':'Layanan Umum','EBA.994':'Layanan Perkantoran','EBA.Z08':'Tata Kelola','EBA.Z24':'Monev'};
 const UNITS=['Dit KSIA Amerop','Dit Amerika I','Dit Amerika II','Dit Eropa I','Dit Eropa II','Setditjen'];
-const UNIT_MAP={'Dit Amerika I':'Dit Amerika I','Dit Amerika II':'Dit Amerika II','Dit Eropa I':'Dit Eropa I','Dit Eropa II':'Dit Eropa II','Dit KSIA Amerop':'Dit KSIA Amerop','Setditjen':'Setditjen'};
+const UNIT_MAP={
+'Dit KSIA Amerop':'Dit KSIA Amerop','KSIA Amerop':'Dit KSIA Amerop','KSIA':'Dit KSIA Amerop',
+'Dit Amerika I':'Dit Amerika I','Amerika I':'Dit Amerika I',
+'Dit Amerika II':'Dit Amerika II','Amerika II':'Dit Amerika II',
+'Dit Eropa I':'Dit Eropa I','Eropa I':'Dit Eropa I',
+'Dit Eropa II':'Dit Eropa II','Eropa II':'Dit Eropa II',
+'Setditjen':'Setditjen','Dit Setditjen':'Setditjen','Setditjen Amerop':'Setditjen'
+};
 const DK=Object.keys(DIR);const ML=9;
 const ALL_OUTPUTS=new Set(Object.values(DIR).flatMap(d=>d.outputs));
 
@@ -307,6 +314,13 @@ const outs=DIR[u].outputs;let j=0,nj=0,eba=0;
 outs.forEach(oc=>{B.filter(r=>r.l==='A'&&r.pr===oc).forEach(a=>{
 if(a.c.startsWith('524'))j+=a.p;else if(oc==='EBA.994')eba+=a.p;else nj+=a.p;});});
 return{j,nj,eba}}
+
+// Kegiatan JSON encoding (backward-compat: also handles plain strings)
+function parseKegiatan(fc){const k=fc.kegiatan||'';if(k.startsWith('{')){try{const p=JSON.parse(k);return{text:p.text||k,lokasi:p.lokasi||'',ket:p.ket||''};}catch(e){}}return{text:k,lokasi:'',ket:''};}
+function encodeKegiatan(text,lokasi,ket){if(!lokasi&&!ket)return text;return JSON.stringify({text,lokasi,ket});}
+
+// Waktu display formatter
+function fmtWaktu(w){if(!w)return'';const BLN=['','Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];const BLNL=['','Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];if(w.startsWith('W')){const p=w.slice(1).split('/');const wk=p[0]||'',mm=parseInt(p[1]),yy=p[2]||'';return'Minggu ke-'+wk+(mm?', '+(BLN[mm]||p[1]):'')+' '+yy;}if(w.match(/^\d{1,2}\/\d{4}$/)){const p=w.split('/');return(BLNL[parseInt(p[0])]||p[0])+' '+p[1];}return w;}
 
 // Date helpers
 function fmtDt(dt){if(!dt)return'-';const p=dt.split('/');if(p.length<3)return dt;return p[1].padStart(2,'0')+'/'+p[0].padStart(2,'0')+'/'+p[2]}
@@ -348,7 +362,7 @@ let cTab='overview',exSet=new Set(),selOut='ALL',pjQ='',pjSrc='ALL';
 let pjUnit='ALL',pjBulan='ALL',pjAkun='ALL',pjSpby='ALL',pjFlag='ALL';
 let pjSort='',pjSortDir=1,pjModalIdx=null;
 let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL';
-let fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',status:'forecast',waktu:''};
+let fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',lokasi:'',ket:'',status:'forecast',waktu:''};
 let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[15,50,70,100],includeDirektif:false};
 if(!rpdSettings.hasOwnProperty('includeDirektif'))rpdSettings.includeDirektif=false;
 let rpdInputMode='pct';
@@ -358,7 +372,7 @@ let _fcCollapse={proj:true,rpd:true};
 let B=B_EMBED.slice(),PJ=PJ_EMBED.slice();
 let loadStatus={fa:'memuat',pj:'memuat',fc:'memuat'};
 
-function resetForm(){fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',status:'forecast',waktu:''};fcEditId=null}
+function resetForm(){fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',lokasi:'',ket:'',status:'forecast',waktu:''};fcEditId=null}
 function statusDot(s){return s.includes('live')||s.includes('7/7')?'on':s.includes('error')||s.includes('gagal')?'err':s==='loading'||s==='memuat'?'off':'off'}
 
 // ========== RENDER ==========
@@ -447,7 +461,13 @@ const pt=pT(o.c);const spbyAmt=nmoT(o.c);const gap=o.r-spbyAmt;const isE=exSet.h
 const statusCls=Math.abs(gap)<1000?'bg':gap>0?'ba':'br';const statusTxt=Math.abs(gap)<1000?'OK':gap>0?'SAKTI>SPBY':'SPBY>SAKTI';
 tb+=`<tr class="or" onclick="tgl('r_${o.c}')"><td><span class="ei ${isE?'op':''}">&#9654;</span> <strong>${o.c}</strong> — ${ON[o.c]||''}</td><td class="n">${ff(o.r)}</td><td class="n">${ff(pt)}</td><td class="n">${ff(spbyAmt)||'—'}</td><td class="n" style="font-weight:600;color:${Math.abs(gap)<1000?'var(--accent)':gap>0?'var(--amber)':'var(--red)'}">${ff(gap)}</td><td><span class="b ${statusCls}">${statusTxt}</span></td></tr>`;
 if(isE){gK(o.c).forEach(k=>{const kp=PJ.filter(r=>r.out===o.c&&r.komp===k.c).reduce((s,r)=>s+r.amt,0);const ks=PJ.filter(r=>r.out===o.c&&r.komp===k.c).reduce((s,r)=>s+(r.nmo||0),0);const kg=k.r-ks;
-tb+=`<tr class="kr"><td>${k.c} — ${k.d.substring(0,50)}</td><td class="n">${ff(k.r)}</td><td class="n">${ff(kp)}</td><td class="n">${ff(ks)||'—'}</td><td class="n" style="color:${Math.abs(kg)<1000?'var(--accent)':kg>0?'var(--amber)':'var(--red)'}">${ff(kg)}</td><td></td></tr>`;});}});
+tb+=`<tr class="kr"><td>${k.c} — ${k.d.substring(0,50)}</td><td class="n">${ff(k.r)}</td><td class="n">${ff(kp)}</td><td class="n">${ff(ks)||'—'}</td><td class="n" style="color:${Math.abs(kg)<1000?'var(--accent)':kg>0?'var(--amber)':'var(--red)'}">${ff(kg)}</td><td></td></tr>`;});
+// NMO detail breakdown
+const nmoRecs=PJ.filter(r=>r.out===o.c&&(r.nmo||0)>0).sort((a,b)=>(b.nmo||0)-(a.nmo||0));
+if(nmoRecs.length>0){
+tb+=`<tr class="ar" style="background:var(--blue-bg)"><td colspan="6" style="font-size:11px;font-weight:600;color:var(--blue);padding:4px 10px 4px 40px">&#9432; SPBY Detail — ${nmoRecs.length} catatan (terbesar diatas)</td></tr>`;
+nmoRecs.forEach(r=>{tb+=`<tr class="ar"><td style="font-family:'JetBrains Mono',monospace">${r.kode_raw||r.out}</td><td class="n" colspan="2" style="color:var(--tx2);text-align:left;font-size:11px">${(r.desc||'').substring(0,55)}${(r.desc||'').length>55?'…':''} <span style="color:var(--tx3)">[${r.unit||''}]</span></td><td class="n" style="color:var(--blue);font-weight:600">${ff(r.nmo)}</td><td colspan="2"></td></tr>`;});
+}}});
 c.innerHTML+=`<div class="card"><div class="ch"><h2>Rekonsiliasi</h2><div style="font-size:11px;color:var(--tx3)">SPBY = Nilai Model O dari sheet PJ</div></div><div class="st" style="max-height:550px"><table><thead><tr><th>Output / Subkomponen</th><th class="n">SAKTI</th><th class="n">PJ</th><th class="n">SPBY</th><th class="n">Selisih (SAKTI-SPBY)</th><th>Status</th></tr></thead><tbody>${tb}</tbody></table></div></div>`;}
 
 // ========== TAB: RPD ==========
@@ -699,6 +719,10 @@ c.innerHTML+=`<div class="card"><div class="ch"><h2>${fcEditId?'Edit forecast':'
 <div class="form-row"><div class="form-group"><label>Direktorat</label><select onchange="fcForm.dir=this.value;render()" style="min-width:200px"><option value="">— Pilih —</option>${dirOpts}</select></div>
 <div class="form-group"><label>Kegiatan</label><input type="text" placeholder="Nama kegiatan..." value="${fcForm.kegiatan.replace(/"/g,'&quot;')}" oninput="fcForm.kegiatan=this.value" style="width:300px"></div>
 <div class="form-group"><label>Status</label><select onchange="fcForm.status=this.value"><option value="forecast" ${fcForm.status==='forecast'?'selected':''}>Forecast</option><option value="submitted" ${fcForm.status==='submitted'?'selected':''}>Sudah PJ</option></select></div></div>
+<div class="form-row">
+<div class="form-group"><label>Lokasi</label><input type="text" placeholder="Kota/negara tujuan..." value="${(fcForm.lokasi||'').replace(/"/g,'&quot;')}" oninput="fcForm.lokasi=this.value" style="width:220px"></div>
+<div class="form-group"><label>Keterangan</label><input type="text" placeholder="Catatan tambahan (opsional)..." value="${(fcForm.ket||'').replace(/"/g,'&quot;')}" oninput="fcForm.ket=this.value" style="width:300px"></div>
+</div>
 <div class="form-row">${waktuH}</div>
 <div class="form-group" style="margin-top:8px"><label>Rincian akun</label><div>${makH}</div><button class="btn btn-sm" onclick="fcForm.maks.push({mak:'',amt:0});render()" style="margin-top:4px">+ Tambah akun</button></div>
 <div style="margin-top:12px;display:flex;align-items:center;gap:16px"><div id="fcT" style="font-size:14px;font-weight:700;font-family:'JetBrains Mono',monospace">Total: Rp ${ff(fcTot)}</div>
@@ -715,13 +739,16 @@ if(fcFilterType==='nonjaldis')fil=fil.filter(f=>(f.maks||[]).some(m=>m.mak&&!m.m
 if(fcFilterTgl!=='ALL'){const tw=parseInt(fcFilterTgl);fil=fil.filter(f=>{const ftw=fcWaktuTw(f);return ftw===tw;});}
 const fdo=DK.filter(d=>d!=='Direktif').map(d=>`<option value="${d}" ${fcFilterDir===d?'selected':''}>${DIR[d].label}</option>`).join('');
 let fl=fil.map(fc=>{const jT=(fc.maks||[]).filter(m=>m.mak.startsWith('524')).reduce((s,m)=>s+m.amt,0);const nT=(fc.maks||[]).filter(m=>!m.mak.startsWith('524')).reduce((s,m)=>s+m.amt,0);
+const kp=parseKegiatan(fc);
 const stBtn=fc.status==='forecast'?`<button class="btn btn-sm bg" onclick="toggleSt('${fc.id}','submitted')" title="Klik untuk ubah ke Sudah PJ">&#9679; Forecast</button>`:`<button class="btn btn-sm" style="background:var(--accent-bg);color:var(--accent);border-color:var(--accent)" onclick="toggleSt('${fc.id}','forecast')" title="Klik untuk ubah kembali ke Forecast">&#10003; Sudah PJ</button>`;
-const wLabel=fc.waktu?`<span style="font-size:10px;background:var(--blue-bg);color:var(--blue);padding:1px 5px;border-radius:3px;margin-left:4px">${fc.waktu}</span>`:'';
-return`<div class="fc-card" style="${fc.status==='submitted'?'opacity:.7;border-left:3px solid var(--accent)':''}"><div class="fc-header"><div class="fc-title">${fc.kegiatan||'-'}${wLabel} ${stBtn}</div><div><button class="btn btn-sm" onclick="editFc('${fc.id}')">Edit</button> <button class="btn btn-sm btn-r" onclick="delFc('${fc.id}')">Hapus</button></div></div><div class="fc-detail">${DIR[fc.dir]?DIR[fc.dir].label:fc.dir} | Rp ${ff(fc.total)} (J: ${ff(jT)} | Non-J: ${ff(nT)})${fc.status==='submitted'?' — <em>tidak dihitung dalam forecast</em>':''}</div><div class="fc-maks">${(fc.maks||[]).filter(m=>m.mak).map(m=>`${m.mak}: ${ff(m.amt)}`).join(' | ')}</div></div>`;}).join('');
+const wLabel=fc.waktu?`<span style="font-size:10px;background:var(--blue-bg);color:var(--blue);padding:1px 5px;border-radius:3px;margin-left:4px">${fmtWaktu(fc.waktu)}</span>`:'';
+const lokasiLine=kp.lokasi?`<div style="font-size:11px;color:var(--tx2);margin-top:2px">&#128205; ${kp.lokasi}</div>`:'';
+const ketLine=kp.ket?`<div style="font-size:11px;color:var(--tx3);font-style:italic;margin-top:2px">${kp.ket}</div>`:'';
+return`<div class="fc-card" style="${fc.status==='submitted'?'opacity:.7;border-left:3px solid var(--accent)':''}"><div class="fc-header"><div class="fc-title">${kp.text||'-'}${wLabel} ${stBtn}</div><div><button class="btn btn-sm" onclick="editFc('${fc.id}')">Edit</button> <button class="btn btn-sm btn-r" onclick="delFc('${fc.id}')">Hapus</button></div></div><div class="fc-detail">${DIR[fc.dir]?DIR[fc.dir].label:fc.dir} | Rp ${ff(fc.total)} <small style="font-size:11px;font-style:italic">(Jaldis: ${ff(jT)} | Non-Jaldis: ${ff(nT)})</small>${fc.status==='submitted'?' — <em>tidak dihitung dalam forecast</em>':''}</div>${lokasiLine}${ketLine}<div class="fc-maks">${(fc.maks||[]).filter(m=>m.mak).map(m=>`${m.mak}: ${ff(m.amt)}`).join(' | ')}</div></div>`;}).join('');
 c.innerHTML+=`<div class="card"><div class="ch"><h2>Daftar forecast (${forecasts.length})</h2></div>
 <div class="filters">
 <div class="filter-group"><div class="filter-label">Direktorat</div><select onchange="fcFilterDir=this.value;render()"><option value="ALL" ${fcFilterDir==='ALL'?'selected':''}>Semua</option>${fdo}</select></div>
-<div class="filter-group"><div class="filter-label">Jaldis/Non-J</div><select onchange="fcFilterType=this.value;render()"><option value="ALL" ${fcFilterType==='ALL'?'selected':''}>Semua</option><option value="jaldis" ${fcFilterType==='jaldis'?'selected':''}>Jaldis</option><option value="nonjaldis" ${fcFilterType==='nonjaldis'?'selected':''}>Non-J</option></select></div>
+<div class="filter-group"><div class="filter-label">Jaldis/Non-Jaldis</div><select onchange="fcFilterType=this.value;render()"><option value="ALL" ${fcFilterType==='ALL'?'selected':''}>Semua</option><option value="jaldis" ${fcFilterType==='jaldis'?'selected':''}>Jaldis</option><option value="nonjaldis" ${fcFilterType==='nonjaldis'?'selected':''}>Non-Jaldis</option></select></div>
 <div class="filter-group"><div class="filter-label">Triwulan</div><select onchange="fcFilterTgl=this.value;render()"><option value="ALL" ${fcFilterTgl==='ALL'?'selected':''}>Semua TW</option>${TW_LABELS.map((l,i)=>`<option value="${i+1}" ${fcFilterTgl===String(i+1)?'selected':''}>${l}</option>`).join('')}</select></div>
 <span style="font-size:12px;color:var(--tx2);align-self:flex-end">${fil.length}/${forecasts.length}</span>
 </div>
@@ -786,11 +813,12 @@ window.submitFc=async function(){if(!fcForm.dir){alert('Pilih direktorat');retur
 const v=fcForm.maks.filter(m=>m.mak&&m.amt>0);if(!v.length){alert('Tambahkan akun');return}const t=v.reduce((s,m)=>s+m.amt,0);
 const btn=document.getElementById('fcBtn');if(btn)btn.disabled=true;
 const waktu=fcForm.waktu||'';
-if(fcEditId){await saveFc('update',{id:fcEditId,dir:fcForm.dir,maks:v,kegiatan:fcForm.kegiatan.trim(),status:fcForm.status,total:t,waktu})}
-else{const newId='l_'+Date.now();await saveFc('create',{id:newId,dir:fcForm.dir,maks:v,kegiatan:fcForm.kegiatan.trim(),status:fcForm.status,total:t,waktu})}
+const kegStr=encodeKegiatan(fcForm.kegiatan.trim(),fcForm.lokasi.trim(),fcForm.ket.trim());
+if(fcEditId){await saveFc('update',{id:fcEditId,dir:fcForm.dir,maks:v,kegiatan:kegStr,status:fcForm.status,total:t,waktu})}
+else{const newId='l_'+Date.now();await saveFc('create',{id:newId,dir:fcForm.dir,maks:v,kegiatan:kegStr,status:fcForm.status,total:t,waktu})}
 resetForm();render()};
-window.editFc=function(id){const fc=forecasts.find(f=>f.id===id);if(!fc)return;fcEditId=id;fcForm={dir:fc.dir,maks:(fc.maks||[]).map(m=>({mak:m.mak,amt:m.amt})),kegiatan:fc.kegiatan,status:fc.status,waktu:fc.waktu||''};if(!fcForm.maks.length)fcForm.maks=[{mak:'',amt:0}];render();setTimeout(()=>{const el=document.querySelector('.form-row');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})},50)};
-window.delFc=async function(id){const fc=forecasts.find(f=>f.id===id);if(!confirm('Hapus "'+(fc?fc.kegiatan:'')+'"?'))return;await saveFc('delete',{id});if(fcEditId===id)resetForm();render()};
+window.editFc=function(id){const fc=forecasts.find(f=>f.id===id);if(!fc)return;fcEditId=id;const kp=parseKegiatan(fc);fcForm={dir:fc.dir,maks:(fc.maks||[]).map(m=>({mak:m.mak,amt:m.amt})),kegiatan:kp.text,lokasi:kp.lokasi,ket:kp.ket,status:fc.status,waktu:fc.waktu||''};if(!fcForm.maks.length)fcForm.maks=[{mak:'',amt:0}];render();setTimeout(()=>{const el=document.querySelector('.form-row');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})},50)};
+window.delFc=async function(id){const fc=forecasts.find(f=>f.id===id);if(!confirm('Hapus "'+(fc?parseKegiatan(fc).text:'')+'"?'))return;await saveFc('delete',{id});if(fcEditId===id)resetForm();render()};
 window.tgl=function(c2){exSet.has(c2)?exSet.delete(c2):exSet.add(c2);render()};
 
 // ========== CSV DOWNLOAD HELPER ==========
