@@ -126,14 +126,19 @@ function parseAmt(v){if(!v)return 0;let s=String(v).trim();if(s==='-'||s==='nan'
 function extractAkun(mak){if(!mak)return '';let m=String(mak).trim().match(/^(\d{6})/);return m?m[1]:''}
 
 function normKode(kode){
-const s=String(kode||'').trim().replace(/\s+/g,'');const parts=s.split('.');
+const s=String(kode||'').trim().replace(/\s+/g,'');
+const sC=s.replace(/\.?\d{6}.*$/,'');
+const parts=sC.split('.').filter(Boolean);
 let out='',sub='',komp='';
-if(parts.length>=2&&parts[0].match(/^\d{4}$/)&&parts[1].match(/^[A-Z]+\d{3}$/)){
-out=parts[0]+'.'+parts[1];if(parts.length>=3)sub=parts[2];if(parts.length>=4)komp=parts[2]+'.'+parts[3];
-}else{
-const m=s.match(/^(\d{4}\.[A-Z]+\d{3})\.?(\d{3})?\.?([A-Z0-9]+)?/);
-if(m){out=m[1];if(m[2])sub=m[2];if(m[3])komp=m[2]+'.'+m[3]}else{out=s}}
-return[out,sub,komp]}
+if(parts.length>=3&&parts[0].match(/^\d{4}$/)&&parts[1].match(/^[A-Z]{2,4}$/)&&parts[2].match(/^[A-Z0-9]{2,4}$/)){
+out=parts[1]+'.'+parts[2];sub=parts[3]||'';
+komp=parts[3]&&parts[4]?parts[3]+'.'+parts[4]:(parts[3]||'');
+return[out,sub,komp];}
+if(parts.length>=2&&parts[0].match(/^[A-Z]{2,4}$/)&&parts[1].match(/^[A-Z0-9]{2,4}$/)){
+out=parts[0]+'.'+parts[1];sub=parts[2]||'';
+komp=parts[2]&&parts[3]?parts[2]+'.'+parts[3]:(parts[2]||'');
+return[out,sub,komp];}
+return[s,'',''];}
 
 function parsePJSheet(csvText,unitName,type){
 const rows=Papa.parse(csvText,{header:true,skipEmptyLines:true}).data;
@@ -146,7 +151,7 @@ const makCol=Object.keys(rows[0]||{}).find(c=>c.includes('MAK')||c.includes('Aku
 const spbyCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NO')&&c.toUpperCase().includes('SPBY'))||'';
 const akrualCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('STATUS AKRUAL'))||'';
 const penggantianCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('PENERIMA'))||Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NAMA')&&c.toUpperCase().includes('TRANSFER'))||'';
-const nmoCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NILAI MODEL'))||'';
+const nmoCol=Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NILAI MODEL O'))||Object.keys(rows[0]||{}).find(c=>c.toUpperCase().includes('NILAI MODEL'))||'';
 const unitCol=type==='jaldis'?Object.keys(rows[0]||{}).find(c=>c.includes('Unit'))||'':'';
 
 rows.forEach(row=>{
@@ -324,7 +329,7 @@ try{const r=await fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'text/
 const j=await r.json();if(j.success&&j.id){_settingsFcId=j.id;}}catch(e){console.warn('saveSettings error',e);}
 }}
 function rpdTarget(dk,tw){return dP(dk)*(rpdSettings.pct[tw]/100)}
-function rpdTargetTotal(tw){return DK.filter(d=>d!=='Direktif').reduce((s,dk)=>s+rpdTarget(dk,tw),0)}
+function rpdTargetTotal(tw){return DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif')).reduce((s,dk)=>s+rpdTarget(dk,tw),0)}
 
 // Forecast waktu helpers
 function fcWaktuTw(fc){
@@ -344,11 +349,12 @@ let pjUnit='ALL',pjBulan='ALL',pjAkun='ALL',pjSpby='ALL',pjFlag='ALL';
 let pjSort='',pjSortDir=1,pjModalIdx=null;
 let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL';
 let fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',status:'forecast',waktu:''};
-let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[15,50,70,100]};
+let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[15,50,70,100],includeDirektif:false};
+if(!rpdSettings.hasOwnProperty('includeDirektif'))rpdSettings.includeDirektif=false;
 let rpdInputMode='pct';
 let faAsOf=localStorage.getItem('amerop_fa_asof')||'';
 let _settingsFcId=null;
-let _fcCollapse={proj:false,rpd:false};
+let _fcCollapse={proj:true,rpd:true};
 let B=B_EMBED.slice(),PJ=PJ_EMBED.slice();
 let loadStatus={fa:'memuat',pj:'memuat',fc:'memuat'};
 
@@ -369,8 +375,8 @@ app.innerHTML=`<div class="header"><div>
 </div>
 <div class="status-bar" style="margin-top:4px">${asofDisp}</div>
 </div>
-<div class="tabs">${[['overview','Ringkasan'],['budget','Detail Anggaran'],['recon','Rekonsiliasi'],['rpd','RPD'],['pj','Tracker PJ'],['forecast','Forecast']].map(([k,v])=>`<div class="tab ${cTab===k?'active':''}" onclick="cTab='${k}';render()">${v}</div>`).join('')}</div></div>`;
-({overview:rOv,budget:rBd,recon:rRc,rpd:rRPD,pj:rPJ,forecast:rFc})[cTab](app);
+<div class="tabs">${[['overview','Ringkasan'],['budget','Detail Anggaran'],['recon','Rekonsiliasi'],['rpd','RPD'],['pj','Tracker PJ'],['forecast','Forecast'],['settings','⚙ Pengaturan']].map(([k,v])=>`<div class="tab ${cTab===k?'active':''}" onclick="cTab='${k}';render()">${v}</div>`).join('')}</div></div>`;
+({overview:rOv,budget:rBd,recon:rRc,rpd:rRPD,pj:rPJ,forecast:rFc,settings:rSet})[cTab](app);
 
 // modal
 if(pjModalIdx!==null){
@@ -400,7 +406,7 @@ setTimeout(()=>{const a=document.getElementById('mC');if(!a)return;const mo=gMS(
 const now=new Date();const curTW=now.getMonth()<3?0:now.getMonth()<6?1:now.getMonth()<9?2:3;
 let rpdH='<div class="card" style="margin-top:0"><div class="ch"><h2>Ringkasan RPD Triwulanan</h2><span style="font-size:11px;color:var(--tx2)">Target: TW I '+rpdSettings.pct[0]+'% | TW II '+rpdSettings.pct[1]+'% | TW III '+rpdSettings.pct[2]+'% | TW IV '+rpdSettings.pct[3]+'%</span></div><div class="st"><table class="rpd-table"><thead><tr><th>Direktorat</th>';
 TW_LABELS.forEach((l,i)=>{rpdH+=`<th class="n">${l} (${rpdSettings.pct[i]}%)</th>`;});rpdH+='</tr></thead><tbody>';
-DK.filter(d=>d!=='Direktif').forEach(dk=>{
+DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif')).forEach(dk=>{
 const dp=dP(dk),dr=dR(dk);rpdH+=`<tr><td>${DIR[dk].label}</td>`;
 TW_LABELS.forEach((l,i)=>{const tgt=dp*(rpdSettings.pct[i]/100);const lapsed=i<curTW;const cur=i===curTW;const met=dr>=tgt;
 const pct2=tgt>0?Math.min(dr/tgt,1):0;const cls=lapsed?(met?'style="color:var(--accent)"':'style="color:var(--red)"'):(cur?'style="font-weight:700"':'');
@@ -448,7 +454,8 @@ c.innerHTML+=`<div class="card"><div class="ch"><h2>Rekonsiliasi</h2><div style=
 function rRPD(c){
 const now=new Date();const curTW=now.getMonth()<3?0:now.getMonth()<6?1:now.getMonth()<9?2:3;
 const pct=rpdSettings.pct;
-const tP=DK.filter(d=>d!=='Direktif').reduce((s,dk)=>s+dP(dk),0);
+const _rpdDK=DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif'));
+const tP=_rpdDK.reduce((s,dk)=>s+dP(dk),0);
 
 // Settings card
 let setH=`<div class="card"><div class="ch"><h2>Pengaturan RPD</h2><div style="font-size:12px;color:var(--tx2)">Rencana Penarikan Dana per Triwulan</div></div><div style="padding:16px">
@@ -477,9 +484,16 @@ setH+=`<div class="form-group"><label>TW IV (tetap 100%)</label>
 <div style="font-size:10px;color:var(--tx3);margin-top:2px">${rpdInputMode==='pct'?fmt(tP):pc(1)}</div>
 </div>`;
 
-setH+=`</div><div style="margin-top:12px;display:flex;gap:8px">
+setH+=`</div>
+<div style="margin-top:12px;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--bd)">
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:500">
+<input type="checkbox" ${rpdSettings.includeDirektif?'checked':''} onchange="rpdSettings.includeDirektif=this.checked;saveRpd();render()" style="width:15px;height:15px;cursor:pointer">
+Sertakan Direktif Presiden (FAN.ZZ1) dalam perhitungan RPD
+</label>
+<div style="font-size:11px;color:var(--tx3);margin-top:4px;margin-left:23px">Jika diaktifkan, pagu dan realisasi Direktif Presiden ikut dihitung dalam target & proyeksi RPD.</div>
+</div>
+<div style="margin-top:10px">
 <button class="btn btn-sm btn-p" onclick="saveRpd();toast('RPD disimpan','ok');render()">&#10003; Simpan</button>
-<button class="btn btn-sm" onclick="rpdSettings={pct:[15,50,70,100]};saveRpd();render()">Reset default</button>
 </div></div></div>`;
 
 // Kebutuhan table
@@ -488,7 +502,7 @@ TW_LABELS.forEach((l,i)=>{const lapsed=i<curTW;const cur=i===curTW;tbH+=`<th cla
 tbH+=`</tr></thead><tbody>`;
 
 let totP=0,totR=0,totTw=[0,0,0,0];
-DK.filter(d=>d!=='Direktif').forEach(dk=>{
+_rpdDK.forEach(dk=>{
 const dp=dP(dk),dr=dR(dk);totP+=dp;totR+=dr;
 tbH+=`<tr><td><strong>${DIR[dk].label}</strong></td><td class="n">${fmt(dp)}</td><td class="n">${fmt(dr)}</td>`;
 TW_LABELS.forEach((l,i)=>{
@@ -512,7 +526,7 @@ c.innerHTML+=setH+tbH;
 }
 
 window.updRpd=function(idx,val){
-const tP=DK.filter(d=>d!=='Direktif').reduce((s,dk)=>s+dP(dk),0);
+const tP=DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif')).reduce((s,dk)=>s+dP(dk),0);
 let newPct;
 if(rpdInputMode==='pct'){newPct=Math.min(99,Math.max(0,val))}
 else{newPct=tP>0?Math.min(99,Math.max(0,(val/tP)*100)):0}
@@ -636,19 +650,18 @@ if(!_fcCollapse.proj){c.innerHTML+=`<div class="card"><div class="ch" style="cur
 const now=new Date();const curTW=now.getMonth()<3?0:now.getMonth()<6?1:now.getMonth()<9?2:3;
 const pct=rpdSettings.pct;
 let rpdH=_fcCollapse.rpd?`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.rpd=false;render()"><h2>Proyeksi RPD ▶ <small style="font-weight:400;font-size:12px;color:var(--tx3)">(klik untuk buka)</small></h2></div></div>`:``;
-if(!_fcCollapse.rpd)rpdH+=`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.rpd=true;render()"><h2>Proyeksi RPD ▼</h2><div style="font-size:12px;color:var(--tx2)">PJ + Forecast vs target RPD triwulanan</div></div><div class="st"><table class="rpd-table"><thead><tr><th>Direktorat</th>`;
+if(!_fcCollapse.rpd){const _fcRpdDK=DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif'));
+rpdH+=`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.rpd=true;render()"><h2>Proyeksi RPD ▼</h2><div style="font-size:12px;color:var(--tx2)">PJ + Forecast vs target RPD triwulanan</div></div><div class="st"><table class="rpd-table"><thead><tr><th>Direktorat</th>`;
 TW_LABELS.forEach((l,i)=>{const lapsed=i<curTW;const cur=i===curTW;rpdH+=`<th class="n ${lapsed?'tw-lapsed':cur?'tw-current':''}">${l}${lapsed?' ✓':cur?' ◀':''}<br><small style="font-weight:400;font-size:10px">Target ${pct[i]}%</small></th>`;});
 rpdH+=`</tr></thead><tbody>`;
-DK.filter(d=>d!=='Direktif').forEach(dk=>{
+_fcRpdDK.forEach(dk=>{
 const dp=dP(dk),dr=dR(dk);
-// For each TW, projection = SAKTI + forecasts assigned to that TW or earlier
 const fcForTw=(tw)=>forecasts.filter(f=>f.dir===dk&&f.status==='forecast').reduce((s,fc)=>{
 const ftw=fcWaktuTw(fc);return s+(ftw===null||ftw<=tw+1?(fc.total||0):0);},0);
 rpdH+=`<tr><td><strong>${DIR[dk].label}</strong></td>`;
 TW_LABELS.forEach((l,i)=>{
 const tgt=dp*(pct[i]/100);
 const lapsed=i<curTW;const cur=i===curTW;
-// TW I: use actual SAKTI; others: SAKTI + forecasts up to that TW
 const proj=lapsed||cur?dr:dr+fcForTw(i);
 const gap=proj-tgt;const pctV=tgt>0?proj/tgt:0;
 const cl=gap>=0?'color:var(--accent)':lapsed?'color:var(--red)':'color:var(--amber)';
@@ -657,7 +670,7 @@ ${fmt(proj)}<br>
 <small style="font-size:10px;color:var(--tx3)">${gap>=0?'&#10003;':''} ${gap>=0?'Melebihi +'+fmt(gap):'Kurang '+fmt(Math.abs(gap))}</small>
 </td>`;});
 rpdH+='</tr>';});
-if(!_fcCollapse.rpd){rpdH+=`</tbody></table></div>
+rpdH+=`</tbody></table></div>
 <div style="padding:8px 16px;font-size:11px;color:var(--tx3)">★ TW saat ini: <strong>${TW_LABELS[curTW]}</strong> | Proyeksi TW mendatang menggunakan SAKTI + Forecast yang sudah diinput. Forecast tanpa WAKTU dihitung untuk semua TW.</div>
 </div>`;}
 c.innerHTML+=rpdH;
@@ -779,6 +792,92 @@ resetForm();render()};
 window.editFc=function(id){const fc=forecasts.find(f=>f.id===id);if(!fc)return;fcEditId=id;fcForm={dir:fc.dir,maks:(fc.maks||[]).map(m=>({mak:m.mak,amt:m.amt})),kegiatan:fc.kegiatan,status:fc.status,waktu:fc.waktu||''};if(!fcForm.maks.length)fcForm.maks=[{mak:'',amt:0}];render();setTimeout(()=>{const el=document.querySelector('.form-row');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})},50)};
 window.delFc=async function(id){const fc=forecasts.find(f=>f.id===id);if(!confirm('Hapus "'+(fc?fc.kegiatan:'')+'"?'))return;await saveFc('delete',{id});if(fcEditId===id)resetForm();render()};
 window.tgl=function(c2){exSet.has(c2)?exSet.delete(c2):exSet.add(c2);render()};
+
+// ========== CSV DOWNLOAD HELPER ==========
+function dlCsv(csv,fname){const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;a.click();URL.revokeObjectURL(a.href);}
+
+// ========== TAB: PENGATURAN ==========
+function rSet(c){
+const hist=JSON.parse(localStorage.getItem('amerop_sakti_hist')||'[]');
+let h=`<div class="card"><div class="ch"><h2>Ekspor Data</h2><div style="font-size:12px;color:var(--tx2)">Download data ke file CSV</div></div><div style="padding:16px;display:flex;flex-direction:column;gap:16px">
+<div>
+<div style="font-size:13px;font-weight:600;margin-bottom:4px">Tracker PJ</div>
+<div style="font-size:12px;color:var(--tx2);margin-bottom:8px">Ekspor semua data PJ yang sudah diload (${PJ.length} record).</div>
+<button class="btn btn-sm btn-p" onclick="exportPJ()">&#8595; Download PJ CSV</button>
+</div>
+<div>
+<div style="font-size:13px;font-weight:600;margin-bottom:4px">Daftar Forecast</div>
+<div style="font-size:12px;color:var(--tx2);margin-bottom:8px">Ekspor daftar forecast yang tersimpan (${forecasts.length} item).</div>
+<button class="btn btn-sm btn-p" onclick="exportFc()">&#8595; Download Forecast CSV</button>
+</div>
+</div></div>`;
+
+h+=`<div class="card"><div class="ch"><h2>Riwayat SAKTI</h2><div style="font-size:12px;color:var(--tx2)">Simpan snapshot data SAKTI untuk melacak perubahan pagu &amp; realisasi dari waktu ke waktu</div></div><div style="padding:16px">`;
+h+=`<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
+<div class="filter-group"><div class="filter-label">Label Snapshot</div>
+<input type="text" id="histLabel" placeholder="cth: Setelah revisi pagu Maret" style="width:240px"></div>
+<button class="btn btn-sm btn-p" onclick="saveHistSnap()">&#10011; Simpan Snapshot Sekarang</button>
+</div>`;
+if(hist.length===0){
+h+=`<div style="text-align:center;color:var(--tx3);padding:24px;font-size:13px">Belum ada snapshot tersimpan.<br><small>Klik "Simpan Snapshot" untuk merekam kondisi data SAKTI saat ini.</small></div>`;
+}else{
+if(hist.length>=2){
+h+=`<div style="background:var(--bg);border-radius:8px;border:1px solid var(--bd);padding:12px;margin-bottom:12px">
+<div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--tx2)">Bandingkan dua snapshot:</div>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+<select id="cmpA" style="font-size:12px">${hist.map((s,i)=>`<option value="${i}">${s.label} (${new Date(s.ts).toLocaleDateString('id')})</option>`).join('')}</select>
+<span style="color:var(--tx3);font-size:13px">→</span>
+<select id="cmpB" style="font-size:12px">${hist.map((s,i)=>`<option value="${i}" ${i===hist.length-1?'selected':''}>${s.label} (${new Date(s.ts).toLocaleDateString('id')})</option>`).join('')}</select>
+<button class="btn btn-sm" onclick="compareSnap()">Bandingkan</button>
+</div>
+<div id="snapCmpResult" style="margin-top:10px"></div>
+</div>`;}
+h+=`<div class="st" style="max-height:350px"><table><thead><tr><th>#</th><th>Label</th><th>Tanggal Simpan</th><th class="n">Output dicatat</th><th>Aksi</th></tr></thead><tbody>`;
+hist.forEach((s,i)=>{h+=`<tr><td style="color:var(--tx3)">${i+1}</td><td style="font-weight:500">${s.label}</td><td style="font-size:12px;color:var(--tx2)">${new Date(s.ts).toLocaleString('id')}</td><td class="n">${s.outputs.length}</td><td><button class="btn btn-sm btn-r" onclick="delHistSnap(${i})">Hapus</button></td></tr>`;});
+h+=`</tbody></table></div>`;}
+h+=`</div></div>`;
+c.innerHTML+=h;}
+
+window.exportPJ=function(){
+const rows=PJ.map(r=>({'Direktorat':r.dir,'Unit':r.unit||'','Kode':r.kode_raw||'','Output':r.out,'Subkomponen':r.sub,'Komponen':r.komp,'MAK':r.akun,'Uraian':r.desc,'Tanggal':fmtDt(r.dt),'Jumlah (Rp)':r.amt,'No SPBY':r.spby||'','Nilai Model O':r.nmo||0,'Penggantian':r.penggantian||'','Akrual':r.ak||'','Duplikat':r.dup?'Ya':'Tidak'}));
+dlCsv(Papa.unparse(rows),'PJ_Amerop_'+new Date().toISOString().slice(0,10)+'.csv');};
+
+window.exportFc=function(){
+const rows=forecasts.map(r=>({'ID':r.id,'Direktorat':DIR[r.dir]?.label||r.dir,'Kegiatan':r.kegiatan,'Status':r.status,'Total (Rp)':r.total,'Waktu':r.waktu||'','MAK Detail':(r.maks||[]).map(m=>m.mak+':'+m.amt).join('; ')}));
+dlCsv(Papa.unparse(rows),'Forecast_Amerop_'+new Date().toISOString().slice(0,10)+'.csv');};
+
+window.saveHistSnap=function(){
+const label=document.getElementById('histLabel')?.value.trim()||('Snapshot '+new Date().toLocaleDateString('id'));
+const outputs=B.filter(r=>r.l==='O').map(r=>({c:r.c,p:r.p,r:r.r}));
+const subs=B.filter(r=>r.l==='S').map(r=>({c:r.c,p:r.p,r:r.r,oc:r.oc||''}));
+const hist=JSON.parse(localStorage.getItem('amerop_sakti_hist')||'[]');
+hist.push({id:Date.now().toString(),ts:new Date().toISOString(),label,outputs,subs});
+localStorage.setItem('amerop_sakti_hist',JSON.stringify(hist));
+toast('Snapshot "'+label+'" disimpan','ok');render();};
+
+window.delHistSnap=function(idx){
+const hist=JSON.parse(localStorage.getItem('amerop_sakti_hist')||'[]');
+if(!confirm('Hapus snapshot "'+hist[idx]?.label+'"?'))return;
+hist.splice(idx,1);localStorage.setItem('amerop_sakti_hist',JSON.stringify(hist));render();};
+
+window.compareSnap=function(){
+const hist=JSON.parse(localStorage.getItem('amerop_sakti_hist')||'[]');
+const ia=parseInt(document.getElementById('cmpA').value);
+const ib=parseInt(document.getElementById('cmpB').value);
+const res=document.getElementById('snapCmpResult');
+if(ia===ib){res.innerHTML='<div style="color:var(--amber);font-size:12px">Pilih dua snapshot yang berbeda.</div>';return;}
+const sa=hist[ia],sb=hist[ib];
+const allCodes=[...new Set([...sa.outputs.map(o=>o.c),...sb.outputs.map(o=>o.c)])];
+let rows='';let hasDiff=false;
+allCodes.forEach(c=>{
+const oa=sa.outputs.find(o=>o.c===c)||{p:0,r:0};
+const ob=sb.outputs.find(o=>o.c===c)||{p:0,r:0};
+const dp=ob.p-oa.p,dr=ob.r-oa.r;
+if(dp===0&&dr===0)return;hasDiff=true;
+rows+=`<tr><td style="font-family:'JetBrains Mono',monospace;font-size:12px">${c}</td><td class="n">${fmt(oa.p)}</td><td class="n">${fmt(ob.p)}</td><td class="n" style="${dp>0?'color:var(--accent)':dp<0?'color:var(--red)':'color:var(--tx3)'}">${dp>=0?'+':''}${fmt(dp)}</td><td class="n">${fmt(oa.r)}</td><td class="n">${fmt(ob.r)}</td><td class="n" style="${dr>0?'color:var(--accent)':dr<0?'color:var(--red)':'color:var(--tx3)'}">${dr>=0?'+':''}${fmt(dr)}</td></tr>`;});
+if(!hasDiff){res.innerHTML='<div style="color:var(--accent);font-size:12px">&#10003; Tidak ada perubahan output antar kedua snapshot.</div>';return;}
+res.innerHTML=`<div style="font-size:12px;font-weight:600;margin-bottom:6px;color:var(--tx2)">Perubahan: <em>${sa.label}</em> → <em>${sb.label}</em></div>
+<div class="st" style="max-height:280px"><table><thead><tr><th>Output</th><th class="n">Pagu A</th><th class="n">Pagu B</th><th class="n">Δ Pagu</th><th class="n">Real A</th><th class="n">Real B</th><th class="n">Δ Real</th></tr></thead><tbody>${rows}</tbody></table></div>`;};
 
 // INIT
 loadAll();
