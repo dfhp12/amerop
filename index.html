@@ -348,10 +348,21 @@ if(!SCRIPT_URL){return;}
 try{const r=await fetch(SCRIPT_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'create',dir:'__settings__',kegiatan:sd,status:'settings',maks_json:'[]',total:0,waktu:''})});
 const j=await r.json();if(j.success&&j.id){_settingsFcId=j.id;}}catch(e){console.warn('saveSettings error',e);}
 }}
-function rpdTarget(dk,tw){return dP(dk)*(rpdSettings.pct[tw]/100)}
-function rpdTargetTotal(tw){return DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif')).reduce((s,dk)=>s+rpdTarget(dk,tw),0)}
+function _rpdDKList(){return DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif'))}
+function _saktiTotalForRpd(){return _rpdDKList().reduce((s,dk)=>s+dP(dk),0)}
+function rpdEffectivePagu(dk){const st=_saktiTotalForRpd();if(rpdSettings.budgetOverride&&rpdSettings.budgetOverride>0&&st>0)return dP(dk)*(rpdSettings.budgetOverride/st);return dP(dk)}
+function rpdEffectiveTotalPagu(){if(rpdSettings.budgetOverride&&rpdSettings.budgetOverride>0)return rpdSettings.budgetOverride;return _saktiTotalForRpd()}
+function rpdTarget(dk,tw){return rpdEffectivePagu(dk)*(rpdSettings.pct[tw]/100)}
+function rpdTargetTotal(tw){return _rpdDKList().reduce((s,dk)=>s+rpdTarget(dk,tw),0)}
 
 // Forecast waktu helpers
+function fcWaktuMonth(fc){
+if(!fc.waktu||!fc.waktu.trim())return null;
+const s=fc.waktu.trim();
+if(s.match(/^\d{2}\/\d{2}\/\d{4}$/))return parseInt(s.split('/')[1]);
+if(s.startsWith('W')){const p=s.slice(1).split('/');return parseInt(p[1]||'0')||null;}
+if(s.match(/^\d{1,2}\/\d{4}$/))return parseInt(s.split('/')[0]);
+return null}
 function fcWaktuTw(fc){
 if(!fc.waktu||!fc.waktu.trim())return null;
 const s=fc.waktu.trim();
@@ -367,10 +378,11 @@ return null}
 let cTab='overview',exSet=new Set(),selOut='ALL',pjQ='',pjSrc='ALL';
 let pjUnit='ALL',pjBulan='ALL',pjAkun='ALL',pjSpby='ALL',pjFlag='ALL';
 let pjSort='',pjSortDir=1,pjModalIdx=null;
-let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL',fcSortBy='default',fcSortDir=1;
+let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL',fcFilterStatus='ALL',fcSortBy='default',fcSortDir=1;
 let fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',lokasi:'',ket:'',status:'forecast',waktu:''};
-let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[15,50,70,100],includeDirektif:false};
+let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[14.7,50,75,100],includeDirektif:false,budgetOverride:null};
 if(!rpdSettings.hasOwnProperty('includeDirektif'))rpdSettings.includeDirektif=false;
+if(!rpdSettings.hasOwnProperty('budgetOverride'))rpdSettings.budgetOverride=null;
 let rpdInputMode='pct';
 let faAsOf=localStorage.getItem('amerop_fa_asof')||'';
 let _settingsFcId=null;
@@ -421,6 +433,40 @@ rows+=`<tr${isD?' style="color:var(--tx3);font-style:italic"':''}><td><strong>${
 g.innerHTML=ch+`<div class="card"><div class="ch"><h2>Per direktorat</h2></div><div class="st"><table><thead><tr><th>Direktorat</th><th class="n">Pagu</th><th class="n">SAKTI</th><th class="n">PJ</th><th class="n">Forecast</th><th class="n">Serapan</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 c.appendChild(g);
 setTimeout(()=>{const a=document.getElementById('mC');if(!a)return;const mo=gMS();const mx=Math.max(...mo.map(m=>m[1]),1);const mn={'01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'Mei','06':'Jun','07':'Jul','08':'Ags','09':'Sep','10':'Okt','11':'Nov','12':'Des'};let h='<div class="cbs">';mo.forEach(([k,v])=>{const ht=Math.round((v/mx)*160);h+=`<div class="cbg"><div class="cbw"><div class="cb" style="height:${ht}px;width:100%;background:var(--accent2)"></div></div><div class="cl">${mn[k.split('-')[1]]||k}</div><div class="cl" style="font-family:'JetBrains Mono',monospace">${fmt(v)}</div></div>`;});a.innerHTML=h+'</div>';},30);
+
+// RPD Bulanan chart
+const rpdChCard=document.createElement('div');rpdChCard.className='card';rpdChCard.style.marginTop='0';
+rpdChCard.innerHTML=`<div class="ch"><h2>RPD Bulanan</h2><div style="font-size:11px;color:var(--tx2)">Target realisasi bulanan vs SAKTI aktual</div></div><div class="ca" id="rpdChC"></div><div class="cleg"><span><span class="ld" style="background:var(--accent2)"></span>SAKTI Aktual</span><span><span class="ld" style="background:var(--amber)"></span>Target RPD</span></div>`;
+c.appendChild(rpdChCard);
+setTimeout(()=>{
+const rc=document.getElementById('rpdChC');if(!rc)return;
+const rpdDKListOv=DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif'));
+const tPov=rpdEffectiveTotalPagu();
+const pct=rpdSettings.pct;
+// Monthly incremental % per quarter: Q1 = pct[0]/3, Q2 = (pct[1]-pct[0])/3, etc.
+const qPct=[pct[0]/3,(pct[1]-pct[0])/3,(pct[2]-pct[1])/3,(pct[3]-pct[2])/3];
+// Generate months Jan-Des with target and SAKTI actual
+const allMonths=[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>String(m).padStart(2,'0'));
+const mn2={'01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'Mei','06':'Jun','07':'Jul','08':'Ags','09':'Sep','10':'Okt','11':'Nov','12':'Des'};
+// Get SAKTI realization by month (from B_EMBED sub-level records if available, else estimate from PJ)
+const saktiByMon={};
+// Aggregate SAKTI akrual by month using PJ records (closest proxy)
+gMS().forEach(([k,v])=>{const mm=k.split('-')[1];saktiByMon[mm]=(saktiByMon[mm]||0)+v;});
+const targets=allMonths.map(mm=>{const mi=parseInt(mm)-1;const qi=mi<3?0:mi<6?1:mi<9?2:3;return tPov*(qPct[qi]/100);});
+const actuals=allMonths.map(mm=>saktiByMon[mm]||0);
+const mx2=Math.max(...targets,...actuals,1);
+let rh='<div class="cbs">';
+allMonths.forEach((mm,i)=>{
+const tgt=targets[i];const act=actuals[i];
+const htT=Math.round((tgt/mx2)*160);const htA=Math.round((act/mx2)*160);
+rh+=`<div class="cbg"><div class="cbw" style="align-items:flex-end;justify-content:center;gap:3px">
+<div class="cb" style="height:${htA}px;width:45%;background:var(--accent2)" title="SAKTI: ${fmt(act)}"></div>
+<div class="cb" style="height:${htT}px;width:45%;background:var(--amber)" title="Target RPD: ${fmt(tgt)}"></div>
+</div>
+<div class="cl">${mn2[mm]}</div>
+<div class="cl" style="font-family:'JetBrains Mono',monospace;font-size:9px">${fmt(tgt)}</div>
+</div>`;});
+rc.innerHTML=rh+'</div>';},50);
 
 // RPD summary
 const now=new Date();const curTW=now.getMonth()<3?0:now.getMonth()<6?1:now.getMonth()<9?2:3;
@@ -481,10 +527,24 @@ function rRPD(c){
 const now=new Date();const curTW=now.getMonth()<3?0:now.getMonth()<6?1:now.getMonth()<9?2:3;
 const pct=rpdSettings.pct;
 const _rpdDK=DK.filter(d=>d!=='Direktif'||(rpdSettings.includeDirektif&&d==='Direktif'));
-const tP=_rpdDK.reduce((s,dk)=>s+dP(dk),0);
+const tP=rpdEffectiveTotalPagu();
+const saktiTP=_rpdDK.reduce((s,dk)=>s+dP(dk),0);
+const isOverride=rpdSettings.budgetOverride&&rpdSettings.budgetOverride>0;
 
 // Settings card
 let setH=`<div class="card"><div class="ch"><h2>Pengaturan RPD</h2><div style="font-size:12px;color:var(--tx2)">Rencana Penarikan Dana per Triwulan</div></div><div style="padding:16px">
+
+<div style="margin-bottom:14px;padding:10px 12px;background:${isOverride?'var(--amber-bg)':'var(--bg)'};border-radius:6px;border:1px solid ${isOverride?'var(--amber)':'var(--bd)'};display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+<div class="form-group"><label style="color:${isOverride?'var(--amber)':'var(--tx3)'}">Pagu Efektif (Override Skenario)${isOverride?' ★':''}</label>
+<div style="display:flex;gap:6px;align-items:center">
+<input type="number" id="budgetOverrideInput" placeholder="${fmt(saktiTP)}" value="${isOverride?rpdSettings.budgetOverride:''}" step="1000000" min="0" style="width:180px;font-family:'JetBrains Mono',monospace;border-color:${isOverride?'var(--amber)':'var(--bd)'}" onchange="rpdSettings.budgetOverride=parseFloat(this.value)||null;saveRpd();render()">
+<span style="font-size:11px;color:var(--tx3)">Rp</span>
+${isOverride?`<button class="btn btn-sm" onclick="rpdSettings.budgetOverride=null;saveRpd();render()" title="Reset ke pagu SAKTI">&#8635; Reset SAKTI</button>`:''}
+</div>
+<div style="font-size:10px;color:var(--tx3);margin-top:2px">${isOverride?'Pagu SAKTI: '+fmt(saktiTP)+' | Skenario: '+fmt(tP)+' ('+pc(tP/saktiTP)+')':'Kosongkan untuk menggunakan pagu SAKTI ('+fmt(saktiTP)+')'}</div>
+</div>
+</div>
+
 <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
 <span style="font-size:12px;font-weight:600;color:var(--tx3)">Input mode:</span>
 <button class="btn btn-sm ${rpdInputMode==='pct'?'btn-p':''}" onclick="rpdInputMode='pct';render()">Persentase (%)</button>
@@ -529,7 +589,7 @@ tbH+=`</tr></thead><tbody>`;
 
 let totP=0,totR=0,totTw=[0,0,0,0];
 _rpdDK.forEach(dk=>{
-const dp=dP(dk),dr=dR(dk);totP+=dp;totR+=dr;
+const dp=rpdEffectivePagu(dk),dr=dR(dk);totP+=dp;totR+=dr;
 tbH+=`<tr><td><strong>${DIR[dk].label}</strong></td><td class="n">${fmt(dp)}</td><td class="n">${fmt(dr)}</td>`;
 TW_LABELS.forEach((l,i)=>{
 const tgt=dp*(pct[i]/100);
@@ -701,6 +761,28 @@ rpdH+=`</tbody></table></div>
 </div>`;}
 c.innerHTML+=rpdH;
 
+// ---- Forecast Summary Table per month & TW ----
+{
+const fcActive=forecasts.filter(f=>f.status==='forecast');
+const mnNames={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'Mei',6:'Jun',7:'Jul',8:'Ags',9:'Sep',10:'Okt',11:'Nov',12:'Des'};
+// bucket by month (null = no waktu)
+const byMon={};let noWaktu=0;
+fcActive.forEach(fc=>{const m=fcWaktuMonth(fc);if(m===null){noWaktu+=fc.total||0;}else{byMon[m]=(byMon[m]||0)+(fc.total||0);}});
+// TW buckets
+const twTotals=[0,0,0,0];
+[1,2,3,4,5,6,7,8,9,10,11,12].forEach(m=>{if(byMon[m]){const tw=m<=3?0:m<=6?1:m<=9?2:3;twTotals[tw]+=byMon[m];}});
+const grandTotal=fcActive.reduce((s,f)=>s+(f.total||0),0);
+let smRows='';
+[[1,2,3],[4,5,6],[7,8,9],[10,11,12]].forEach((months,qi)=>{
+months.forEach((m,mi)=>{
+const v=byMon[m]||0;
+smRows+=`<tr><td style="color:var(--tx3);font-size:11px">${mi===0?'TW '+(qi+1):''}</td><td>${mnNames[m]}</td><td class="n">${v>0?fmt(v):'—'}</td></tr>`;});
+smRows+=`<tr style="background:var(--bg);font-weight:600;border-top:1px solid var(--bd)"><td></td><td style="font-size:12px">Subtotal TW ${qi+1}</td><td class="n" style="color:${twTotals[qi]>0?'var(--teal)':'var(--tx3)'}">${twTotals[qi]>0?fmt(twTotals[qi]):'—'}</td></tr>`;});
+if(noWaktu>0)smRows+=`<tr><td style="color:var(--tx3);font-size:11px">—</td><td style="font-style:italic">Belum ditentukan</td><td class="n">${fmt(noWaktu)}</td></tr>`;
+smRows+=`<tr class="dir-row"><td colspan="2">TOTAL</td><td class="n">${fmt(grandTotal)}</td></tr>`;
+c.innerHTML+=`<div class="card"><div class="ch"><h2>Rekapitulasi Nilai Forecast</h2><div style="font-size:12px;color:var(--tx2)">Berdasarkan forecast aktif (status = Forecast)</div></div><div class="st" style="max-height:500px"><table><thead><tr><th>TW</th><th>Bulan</th><th class="n">Nilai Forecast</th></tr></thead><tbody>${smRows}</tbody></table></div></div>`;
+}
+
 // Input form
 const _BTM_MAK=new Set(['521111','521113','521114','521115','521119','521252','521811','522112','522119','523121']);
 const _makTop=Object.entries(MAK).filter(([k])=>!_BTM_MAK.has(k));
@@ -746,6 +828,9 @@ if(fcFilterType==='jaldis')fil=fil.filter(f=>(f.maks||[]).some(m=>m.mak.startsWi
 if(fcFilterType==='nonjaldis')fil=fil.filter(f=>(f.maks||[]).some(m=>m.mak&&!m.mak.startsWith('524')));
 // Tanggal filter — based on WAKTU quarter
 if(fcFilterTgl!=='ALL'){const tw=parseInt(fcFilterTgl);fil=fil.filter(f=>{const ftw=fcWaktuTw(f);return ftw===tw;});}
+// Status filter
+if(fcFilterStatus==='forecast')fil=fil.filter(f=>f.status==='forecast');
+else if(fcFilterStatus==='submitted')fil=fil.filter(f=>f.status==='submitted');
 // Sort
 if(fcSortBy==='waktu'){fil.sort((a,b)=>fcSortDir*waktuToSortKey(a.waktu).localeCompare(waktuToSortKey(b.waktu)));}
 else if(fcSortBy==='input'){fil.sort((a,b)=>{const ka=a.id&&a.id.startsWith('l_')?parseInt(a.id.slice(2)):forecasts.indexOf(a);const kb=b.id&&b.id.startsWith('l_')?parseInt(b.id.slice(2)):forecasts.indexOf(b);return fcSortDir*(ka-kb);});}
@@ -762,6 +847,7 @@ c.innerHTML+=`<div class="card"><div class="ch"><h2>Daftar forecast (${forecasts
 <div class="filter-group"><div class="filter-label">Direktorat</div><select onchange="fcFilterDir=this.value;render()"><option value="ALL" ${fcFilterDir==='ALL'?'selected':''}>Semua</option>${fdo}</select></div>
 <div class="filter-group"><div class="filter-label">Jaldis/Non-Jaldis</div><select onchange="fcFilterType=this.value;render()"><option value="ALL" ${fcFilterType==='ALL'?'selected':''}>Semua</option><option value="jaldis" ${fcFilterType==='jaldis'?'selected':''}>Jaldis</option><option value="nonjaldis" ${fcFilterType==='nonjaldis'?'selected':''}>Non-Jaldis</option></select></div>
 <div class="filter-group"><div class="filter-label">Triwulan</div><select onchange="fcFilterTgl=this.value;render()"><option value="ALL" ${fcFilterTgl==='ALL'?'selected':''}>Semua TW</option>${TW_LABELS.map((l,i)=>`<option value="${i+1}" ${fcFilterTgl===String(i+1)?'selected':''}>${l}</option>`).join('')}</select></div>
+<div class="filter-group"><div class="filter-label">Status</div><select onchange="fcFilterStatus=this.value;render()"><option value="ALL" ${fcFilterStatus==='ALL'?'selected':''}>Semua</option><option value="forecast" ${fcFilterStatus==='forecast'?'selected':''}>&#9679; Forecast</option><option value="submitted" ${fcFilterStatus==='submitted'?'selected':''}>&#10003; Sudah PJ</option></select></div>
 <div class="filter-group"><div class="filter-label">Urutkan</div><select onchange="fcSortBy=this.value;render()"><option value="default" ${fcSortBy==='default'?'selected':''}>Default</option><option value="input" ${fcSortBy==='input'?'selected':''}>Tgl Input</option><option value="waktu" ${fcSortBy==='waktu'?'selected':''}>Waktu Kegiatan</option></select></div>
 <button class="btn btn-sm" onclick="fcSortDir=-fcSortDir;render()" style="align-self:flex-end;min-width:40px" title="Klik untuk ubah urutan">${fcSortDir===1?'↑ Asc':'↓ Desc'}</button>
 <span style="font-size:12px;color:var(--tx2);align-self:flex-end">${fil.length}/${forecasts.length}</span>
