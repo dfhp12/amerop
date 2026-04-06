@@ -217,7 +217,7 @@ try{const r=await fetch(SCRIPT_URL);const j=await r.json();
 if(j.success&&j.data){const all=j.data.map(row=>{const maks=JSON.parse(row.maks_json||'[]');const computedTotal=maks.reduce((s,m)=>s+(parseFloat(m.amt)||0),0);const total=computedTotal>0?computedTotal:(parseFloat(row.total)||0);return{id:row.id,dir:row.dir,kegiatan:row.kegiatan,status:row.status,maks,total,waktu:normalizeWaktu(row.waktu||'')}});
 // Extract settings entry
 const se=all.find(f=>f.dir==='__settings__'||f.status==='settings');
-if(se){_settingsFcId=se.id;try{const sd=JSON.parse(se.kegiatan||'{}');if(sd.fa_asof){faAsOf=sd.fa_asof;localStorage.setItem('amerop_fa_asof',faAsOf)}if(sd.rpd&&sd.rpd.length===4){rpdSettings={pct:sd.rpd};localStorage.setItem('amerop_rpd',JSON.stringify(rpdSettings))}}catch(ex){}}
+if(se){_settingsFcId=se.id;try{const sd=JSON.parse(se.kegiatan||'{}');if(sd.fa_asof){faAsOf=sd.fa_asof;localStorage.setItem('amerop_fa_asof',faAsOf)}if(sd.rpd&&sd.rpd.length===4){rpdSettings={...rpdSettings,pct:sd.rpd};localStorage.setItem('amerop_rpd',JSON.stringify(rpdSettings))}}catch(ex){}}
 forecasts=all.filter(f=>f.dir!=='__settings__'&&f.status!=='settings');loadStatus.fc='live'}
 else throw new Error(j.error||'err')}catch(e){forecasts=JSON.parse(localStorage.getItem('amerop_fc_v8')||'[]');loadStatus.fc='error: '+e.message}}
 
@@ -380,7 +380,7 @@ return null}
 let cTab='overview',exSet=new Set(),selOut='ALL',pjQ='',pjSrc='ALL';
 let pjUnit='ALL',pjBulan='ALL',pjAkun='ALL',pjSpby='ALL',pjFlag='ALL';
 let pjSort='',pjSortDir=1,pjModalIdx=null;
-let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL',fcFilterStatus='ALL',fcSortBy='default',fcSortDir=1;
+let fcEditId=null,fcFilterDir='ALL',fcFilterType='ALL',fcFilterTgl='ALL',fcFilterStatus='ALL',fcSortBy='input',fcSortDir=-1;
 let fcForm={dir:'',maks:[{mak:'',amt:0}],kegiatan:'',lokasi:'',ket:'',status:'forecast',waktu:''};
 let rpdSettings=JSON.parse(localStorage.getItem('amerop_rpd')||'null')||{pct:[14.7,50,75,100],includeDirektif:false,budgetOverride:null};
 if(!rpdSettings.hasOwnProperty('includeDirektif'))rpdSettings.includeDirektif=false;
@@ -447,7 +447,7 @@ setTimeout(()=>{const a=document.getElementById('mC');if(!a)return;const mo=gMS(
 
 // RPD Bulanan chart
 const rpdChCard=document.createElement('div');rpdChCard.className='card';rpdChCard.style.marginTop='0';
-rpdChCard.innerHTML=`<div class="ch"><h2>RPD Bulanan</h2><div style="font-size:11px;color:var(--tx2)">Target realisasi bulanan vs SAKTI aktual</div></div><div class="ca" id="rpdChC"></div><div class="cleg"><span><span class="ld" style="background:var(--accent2)"></span>SAKTI Aktual</span><span><span class="ld" style="background:var(--amber)"></span>Target RPD</span></div>`;
+rpdChCard.innerHTML=`<div class="ch"><h2>RPD Bulanan</h2><div style="font-size:11px;color:var(--tx2)">Target RPD vs SAKTI Akrual vs Nilai Forecast</div></div><div class="ca" id="rpdChC"></div><div class="cleg"><span><span class="ld" style="background:var(--accent2)"></span>SAKTI Akrual</span><span><span class="ld" style="background:var(--blue)"></span>Forecast</span><span><span class="ld" style="background:var(--amber)"></span>Target RPD</span></div>`;
 c.appendChild(rpdChCard);
 setTimeout(()=>{
 const rc=document.getElementById('rpdChC');if(!rc)return;
@@ -459,20 +459,27 @@ const qPct=[pct[0]/3,(pct[1]-pct[0])/3,(pct[2]-pct[1])/3,(pct[3]-pct[2])/3];
 // Generate months Jan-Des with target and SAKTI actual
 const allMonths=[1,2,3,4,5,6,7,8,9,10,11,12].map(m=>String(m).padStart(2,'0'));
 const mn2={'01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'Mei','06':'Jun','07':'Jul','08':'Ags','09':'Sep','10':'Okt','11':'Nov','12':'Des'};
-// Get SAKTI realization by month (from B_EMBED sub-level records if available, else estimate from PJ)
+// SAKTI akrual by month (from PJ records)
 const saktiByMon={};
-// Aggregate SAKTI akrual by month using PJ records (closest proxy)
 gMS().forEach(([k,v])=>{const mm=k.split('-')[1];saktiByMon[mm]=(saktiByMon[mm]||0)+v;});
+// Forecast nilai by month (all statuses: forecast + submitted)
+const fcByMon={};
+forecasts.forEach(fc=>{
+  const m=fcWaktuMonth(fc);
+  if(m!==null){const mm=String(m).padStart(2,'0');fcByMon[mm]=(fcByMon[mm]||0)+(fc.total||0);}
+});
 const targets=allMonths.map(mm=>{const mi=parseInt(mm)-1;const qi=mi<3?0:mi<6?1:mi<9?2:3;return tPov*(qPct[qi]/100);});
 const actuals=allMonths.map(mm=>saktiByMon[mm]||0);
-const mx2=Math.max(...targets,...actuals,1);
+const fcVals=allMonths.map(mm=>fcByMon[mm]||0);
+const mx2=Math.max(...targets,...actuals,...fcVals,1);
 let rh='<div class="cbs">';
 allMonths.forEach((mm,i)=>{
-const tgt=targets[i];const act=actuals[i];
-const htT=Math.round((tgt/mx2)*160);const htA=Math.round((act/mx2)*160);
-rh+=`<div class="cbg"><div class="cbw" style="align-items:flex-end;justify-content:center;gap:3px">
-<div class="cb" style="height:${htA}px;width:45%;background:var(--accent2)" title="SAKTI: ${fmt(act)}"></div>
-<div class="cb" style="height:${htT}px;width:45%;background:var(--amber)" title="Target RPD: ${fmt(tgt)}"></div>
+const tgt=targets[i];const act=actuals[i];const fcv=fcVals[i];
+const htT=Math.round((tgt/mx2)*160);const htA=Math.round((act/mx2)*160);const htF=Math.round((fcv/mx2)*160);
+rh+=`<div class="cbg"><div class="cbw" style="align-items:flex-end;justify-content:center;gap:2px">
+<div class="cb" style="height:${htA}px;width:30%;background:var(--accent2)" title="SAKTI Akrual: ${fmt(act)}"></div>
+<div class="cb" style="height:${htF}px;width:30%;background:var(--blue)" title="Forecast: ${fmt(fcv)}"></div>
+<div class="cb" style="height:${htT}px;width:30%;background:var(--amber)" title="Target RPD: ${fmt(tgt)}"></div>
 </div>
 <div class="cl">${mn2[mm]}</div>
 <div class="cl" style="font-family:'JetBrains Mono',monospace;font-size:9px">${fmt(tgt)}</div>
