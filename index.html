@@ -388,7 +388,7 @@ if(!rpdSettings.hasOwnProperty('budgetOverride'))rpdSettings.budgetOverride=null
 let rpdInputMode='pct';
 let faAsOf=localStorage.getItem('amerop_fa_asof')||'';
 let _settingsFcId=null;
-let _fcCollapse={proj:true,rpd:true};
+let _fcCollapse={proj:true,rpd:true,rekap:true};
 let B=B_EMBED.slice(),PJ=PJ_EMBED.slice();
 let loadStatus={fa:'memuat',pj:'memuat',fc:'memuat'};
 
@@ -421,6 +421,15 @@ if(r){app.innerHTML+=`<div class="modal-overlay" onclick="pjModalIdx=null;render
 window.setAsOf=function(){
 const v=prompt('Masukkan tanggal Akrual (contoh: 28 Maret 2026):',faAsOf);
 if(v!==null){faAsOf=v.trim();localStorage.setItem('amerop_fa_asof',faAsOf);saveSettings();render();}
+}
+window.applyBudgetOverride=function(){
+const cur=rpdSettings.budgetOverride?String(rpdSettings.budgetOverride):'';
+const v=prompt('Masukkan pagu skenario (Rp, angka saja):',cur);
+if(v===null)return;
+const n=parseFloat(v.replace(/[^0-9.]/g,''))||null;
+rpdSettings.budgetOverride=n;saveRpd();
+toast(n?'Override pagu disimpan: Rp '+new Intl.NumberFormat('id-ID').format(n):'Override direset ke pagu SAKTI','ok');
+render();
 }
 
 // ========== TAB: RINGKASAN ==========
@@ -536,16 +545,20 @@ const isOverride=rpdSettings.budgetOverride&&rpdSettings.budgetOverride>0;
 // Settings card
 let setH=`<div class="card"><div class="ch"><h2>Pengaturan RPD</h2><div style="font-size:12px;color:var(--tx2)">Rencana Penarikan Dana per Triwulan</div></div><div style="padding:16px">
 
-<div style="margin-bottom:14px;padding:10px 12px;background:${isOverride?'var(--amber-bg)':'var(--bg)'};border-radius:6px;border:1px solid ${isOverride?'var(--amber)':'var(--bd)'};display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-<div class="form-group"><label style="color:${isOverride?'var(--amber)':'var(--tx3)'}">Pagu Efektif (Override Skenario)${isOverride?' ★':''}</label>
-<div style="display:flex;gap:6px;align-items:center">
-<input type="number" id="budgetOverrideInput" placeholder="${fmt(saktiTP)}" value="${isOverride?rpdSettings.budgetOverride:''}" step="1000000" min="0" style="width:180px;font-family:'JetBrains Mono',monospace;border-color:${isOverride?'var(--amber)':'var(--bd)'}" onchange="rpdSettings.budgetOverride=parseFloat(this.value)||null;saveRpd();render()">
-<span style="font-size:11px;color:var(--tx3)">Rp</span>
-${isOverride?`<button class="btn btn-sm" onclick="rpdSettings.budgetOverride=null;saveRpd();render()" title="Reset ke pagu SAKTI">&#8635; Reset SAKTI</button>`:''}
-</div>
-<div style="font-size:10px;color:var(--tx3);margin-top:2px">${isOverride?'Pagu SAKTI: '+fmt(saktiTP)+' | Skenario: '+fmt(tP)+' ('+pc(tP/saktiTP)+')':'Kosongkan untuk menggunakan pagu SAKTI ('+fmt(saktiTP)+')'}</div>
-</div>
-</div>
+<div style="margin-bottom:14px;padding:10px 12px;background:${isOverride?'var(--amber-bg)':'var(--bg)'};border-radius:6px;border:1px solid ${isOverride?'var(--amber)':'var(--bd)'}">
+<div style="font-size:11px;font-weight:600;color:${isOverride?'var(--amber)':'var(--tx3)'};text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">Pagu Efektif (Override Skenario)${isOverride?' ★':''}</div>
+${isOverride
+  ? `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-size:14px;font-weight:700;font-family:'JetBrains Mono',monospace;color:var(--amber)">${fmt(rpdSettings.budgetOverride)}</span>
+      <button class="btn btn-sm" onclick="applyBudgetOverride()" title="Edit nilai">&#9998; Edit</button>
+      <button class="btn btn-sm" onclick="rpdSettings.budgetOverride=null;saveRpd();render()" title="Reset ke pagu SAKTI">&#8635; Reset SAKTI</button>
+    </div>
+    <div style="font-size:10px;color:var(--tx3);margin-top:4px">Pagu SAKTI: ${fmt(saktiTP)} | Skenario: ${fmt(tP)} (${pc(tP/saktiTP)})</div>`
+  : `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--tx3)">Menggunakan pagu SAKTI: <strong>${fmt(saktiTP)}</strong></span>
+      <button class="btn btn-sm" onclick="applyBudgetOverride()" title="Set pagu skenario">&#9998; Set Override</button>
+    </div>`
+}</div>
 
 <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
 <span style="font-size:12px;font-weight:600;color:var(--tx3)">Input mode:</span>
@@ -763,26 +776,46 @@ rpdH+=`</tbody></table></div>
 </div>`;}
 c.innerHTML+=rpdH;
 
-// ---- Forecast Summary Table per month & TW ----
-{
-const fcActive=forecasts.filter(f=>f.status==='forecast');
-const mnNames={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'Mei',6:'Jun',7:'Jul',8:'Ags',9:'Sep',10:'Okt',11:'Nov',12:'Des'};
-// bucket by month (null = no waktu)
-const byMon={};let noWaktu=0;
-fcActive.forEach(fc=>{const m=fcWaktuMonth(fc);if(m===null){noWaktu+=fc.total||0;}else{byMon[m]=(byMon[m]||0)+(fc.total||0);}});
-// TW buckets
-const twTotals=[0,0,0,0];
-[1,2,3,4,5,6,7,8,9,10,11,12].forEach(m=>{if(byMon[m]){const tw=m<=3?0:m<=6?1:m<=9?2:3;twTotals[tw]+=byMon[m];}});
-const grandTotal=fcActive.reduce((s,f)=>s+(f.total||0),0);
-let smRows='';
-[[1,2,3],[4,5,6],[7,8,9],[10,11,12]].forEach((months,qi)=>{
-months.forEach((m,mi)=>{
-const v=byMon[m]||0;
-smRows+=`<tr><td style="color:var(--tx3);font-size:11px">${mi===0?'TW '+(qi+1):''}</td><td>${mnNames[m]}</td><td class="n">${v>0?fmt(v):'—'}</td></tr>`;});
-smRows+=`<tr style="background:var(--bg);font-weight:600;border-top:1px solid var(--bd)"><td></td><td style="font-size:12px">Subtotal TW ${qi+1}</td><td class="n" style="color:${twTotals[qi]>0?'var(--teal)':'var(--tx3)'}">${twTotals[qi]>0?fmt(twTotals[qi]):'—'}</td></tr>`;});
-if(noWaktu>0)smRows+=`<tr><td style="color:var(--tx3);font-size:11px">—</td><td style="font-style:italic">Belum ditentukan</td><td class="n">${fmt(noWaktu)}</td></tr>`;
-smRows+=`<tr class="dir-row"><td colspan="2">TOTAL</td><td class="n">${fmt(grandTotal)}</td></tr>`;
-c.innerHTML+=`<div class="card"><div class="ch"><h2>Rekapitulasi Nilai Forecast</h2><div style="font-size:12px;color:var(--tx2)">Berdasarkan forecast aktif (status = Forecast)</div></div><div class="st" style="max-height:500px"><table><thead><tr><th>TW</th><th>Bulan</th><th class="n">Nilai Forecast</th></tr></thead><tbody>${smRows}</tbody></table></div></div>`;
+// ---- Forecast Summary Chart per month & TW ----
+if(_fcCollapse.rekap){
+  c.innerHTML+=`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.rekap=false;render()"><h2>Rekapitulasi Nilai Forecast ▶ <small style="font-weight:400;font-size:12px;color:var(--tx3)">(klik untuk buka)</small></h2></div></div>`;
+}else{
+  const fcActive=forecasts.filter(f=>f.status==='forecast');
+  const mnNames={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'Mei',6:'Jun',7:'Jul',8:'Ags',9:'Sep',10:'Okt',11:'Nov',12:'Des'};
+  const byMon={};let noWaktu=0;
+  fcActive.forEach(fc=>{const m=fcWaktuMonth(fc);if(m===null){noWaktu+=fc.total||0;}else{byMon[m]=(byMon[m]||0)+(fc.total||0);}});
+  const twTotals=[0,0,0,0];
+  [1,2,3,4,5,6,7,8,9,10,11,12].forEach(m=>{if(byMon[m]){const tw=m<=3?0:m<=6?1:m<=9?2:3;twTotals[tw]+=byMon[m];}});
+  const grandTotal=fcActive.reduce((s,f)=>s+(f.total||0),0);
+  // TW colors
+  const twColors=['var(--blue)','var(--teal)','var(--accent2)','var(--purple)'];
+  const twLabels=['TW I','TW II','TW III','TW IV'];
+  const allVals=[...Object.values(byMon),...twTotals.filter(v=>v>0)];
+  const mx=Math.max(...allVals,1);
+  // Monthly bars (grouped by TW with color)
+  let barH='<div class="cbs">';
+  [1,2,3,4,5,6,7,8,9,10,11,12].forEach(m=>{
+    const v=byMon[m]||0;const tw=m<=3?0:m<=6?1:m<=9?2:3;
+    const ht=Math.round((v/mx)*160);
+    barH+=`<div class="cbg"><div class="cbw"><div class="cb" style="height:${ht}px;width:100%;background:${twColors[tw]}" title="${mnNames[m]}: ${fmt(v)}"></div></div><div class="cl">${mnNames[m]}</div><div class="cl" style="font-family:'JetBrains Mono',monospace;font-size:9px">${v>0?fmt(v):'—'}</div></div>`;
+  });
+  barH+='</div>';
+  // TW subtotal bars
+  let twBarH='<div class="cbs" style="height:120px">';
+  const twMx=Math.max(...twTotals,1);
+  twTotals.forEach((v,i)=>{
+    const ht=Math.round((v/twMx)*90);
+    twBarH+=`<div class="cbg"><div class="cbw"><div class="cb" style="height:${ht}px;width:100%;background:${twColors[i]}" title="${twLabels[i]}: ${fmt(v)}"></div></div><div class="cl" style="font-weight:600">${twLabels[i]}</div><div class="cl" style="font-family:'JetBrains Mono',monospace;font-size:9px">${v>0?fmt(v):'—'}</div></div>`;
+  });
+  twBarH+='</div>';
+  // Legend
+  const legH='<div class="cleg">'+twLabels.map((l,i)=>`<span><span class="ld" style="background:${twColors[i]}"></span>${l}: ${fmt(twTotals[i])}</span>`).join('')+(noWaktu>0?`<span style="color:var(--tx3)">Belum ditentukan: ${fmt(noWaktu)}</span>`:'')+`<span style="font-weight:600">Total: ${fmt(grandTotal)}</span></div>`;
+  c.innerHTML+=`<div class="card"><div class="ch" style="cursor:pointer" onclick="_fcCollapse.rekap=true;render()"><h2>Rekapitulasi Nilai Forecast ▼</h2><div style="font-size:12px;color:var(--tx2)">Berdasarkan forecast aktif (status = Forecast) | Total: ${fmt(grandTotal)}</div></div>
+  <div style="padding:12px 16px 4px;font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px">Per Bulan</div>
+  <div class="ca" style="padding:8px 16px">${barH}</div>
+  <div style="padding:12px 16px 4px;font-size:11px;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.3px;border-top:1px solid var(--bg3)">Per Triwulan</div>
+  <div class="ca" style="padding:8px 16px;min-height:130px">${twBarH}</div>
+  ${legH}</div>`;
 }
 
 // Input form
