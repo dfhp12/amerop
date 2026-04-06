@@ -214,7 +214,7 @@ let forecasts=[];
 async function loadFc(){
 if(!SCRIPT_URL){forecasts=JSON.parse(localStorage.getItem('amerop_fc_v8')||'[]');loadStatus.fc='local';return}
 try{const r=await fetch(SCRIPT_URL);const j=await r.json();
-if(j.success&&j.data){const all=j.data.map(row=>({id:row.id,dir:row.dir,kegiatan:row.kegiatan,status:row.status,maks:JSON.parse(row.maks_json||'[]'),total:parseFloat(row.total)||0,waktu:normalizeWaktu(row.waktu||'')}));
+if(j.success&&j.data){const all=j.data.map(row=>{const maks=JSON.parse(row.maks_json||'[]');const computedTotal=maks.reduce((s,m)=>s+(parseFloat(m.amt)||0),0);const total=computedTotal>0?computedTotal:(parseFloat(row.total)||0);return{id:row.id,dir:row.dir,kegiatan:row.kegiatan,status:row.status,maks,total,waktu:normalizeWaktu(row.waktu||'')}});
 // Extract settings entry
 const se=all.find(f=>f.dir==='__settings__'||f.status==='settings');
 if(se){_settingsFcId=se.id;try{const sd=JSON.parse(se.kegiatan||'{}');if(sd.fa_asof){faAsOf=sd.fa_asof;localStorage.setItem('amerop_fa_asof',faAsOf)}if(sd.rpd&&sd.rpd.length===4){rpdSettings={pct:sd.rpd};localStorage.setItem('amerop_rpd',JSON.stringify(rpdSettings))}}catch(ex){}}
@@ -230,7 +230,9 @@ const j=await r.json();if(!j.success)throw new Error(j.error);
 if(data.waktu!==undefined){const w=JSON.parse(localStorage.getItem('amerop_fc_waktu')||'{}');if(data.id)w[data.id]=data.waktu;localStorage.setItem('amerop_fc_waktu',JSON.stringify(w))}
 toast(action==='delete'?'Dihapus':'Disimpan','ok');await loadFc();
 // merge waktu from localStorage
-const wStore=JSON.parse(localStorage.getItem('amerop_fc_waktu')||'{}');forecasts.forEach(f=>{if(!f.waktu&&wStore[f.id])f.waktu=normalizeWaktu(wStore[f.id]);else if(f.waktu)f.waktu=normalizeWaktu(f.waktu);});
+const wStore=JSON.parse(localStorage.getItem('amerop_fc_waktu')||'{}');forecasts.forEach(f=>{if(!f.waktu&&wStore[f.id])f.waktu=normalizeWaktu(wStore[f.id]);else if(f.waktu)f.waktu=normalizeWaktu(f.waktu);
+// ensure total is always consistent with maks (fixes stale total in Sheets)
+const ct=(f.maks||[]).reduce((s,m)=>s+(parseFloat(m.amt)||0),0);if(ct>0)f.total=ct;});
 render();return true
 }catch(e){toast('Gagal: '+e.message,'err');return false}
 }else{if(action==='create'){data.id='l_'+Date.now();forecasts.push(data)}
