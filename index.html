@@ -434,7 +434,7 @@ render();
 
 // ========== TAB: RINGKASAN ==========
 function rOv(c){
-const outs=gO();const tP=outs.reduce((s,o)=>s+o.p,0);const tR=outs.reduce((s,o)=>s+o.r,0);const tPJ=pAll();const tFc=forecasts.filter(fc=>fc.status==='forecast').reduce((s,fc)=>s+fc.total,0);
+const outs=gO().filter(o=>o.c!=='FAN.ZZ1');const tP=outs.reduce((s,o)=>s+o.p,0);const tR=outs.reduce((s,o)=>s+o.r,0);const tPJ=pAll();const tFc=forecasts.filter(fc=>fc.status==='forecast').reduce((s,fc)=>s+fc.total,0);
 c.innerHTML+=`<div class="metrics"><div class="mc"><div class="ml">Total pagu</div><div class="mv">${fmt(tP)}</div></div><div class="mc"><div class="ml">Realisasi SAKTI</div><div class="mv">${fmt(tR)}</div><div class="ms">${pc(tR/tP)}</div></div><div class="mc"><div class="ml">PJ Submitted</div><div class="mv">${fmt(tPJ)}</div><div class="ms">${pc(tPJ/tP)}</div></div><div class="mc"><div class="ml">Forecast</div><div class="mv">${fmt(tFc)}</div><div class="ms">${forecasts.filter(f=>f.status==='forecast').length} kegiatan</div></div><div class="mc"><div class="ml">Sisa</div><div class="mv">${fmt(tP-tPJ-tFc)}</div><div class="ms">${pc((tP-tPJ-tFc)/tP)}</div></div></div>`;
 const g=document.createElement('div');g.className='g2';
 let ch=`<div class="card"><div class="ch"><h2>PJ Bulanan</h2></div><div class="ca" id="mC"></div></div>`;
